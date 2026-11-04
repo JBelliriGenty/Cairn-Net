@@ -1,0 +1,9 @@
+services:
+  cairn-net:
+    image: ghcr.io/jbellirigenty/cairn-net:latest
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./config:/etc/cairn-net:ro
+      - ./data:/var/lib/cairn-net

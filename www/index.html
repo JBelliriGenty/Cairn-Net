@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<!-- cairn-net (embedded in the binary). CSP: no inline JS or CSS. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cairn Net</title>
+  <link href="icon.svg" rel="icon" type="image/svg+xml">
+  <link href="panel.css" rel="stylesheet">
+  <script src="i18n.js" defer></script>
+  <script src="panel.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <img src="icon.svg" class="logo" alt="">
+      <div><b id="title">…</b><small id="subtitle"></small></div>
+    </div>
+    <nav id="nav">
+      <button data-view="overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n>Overview</span></button>
+      <button data-view="ports"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h2v4H6zM11 10h2v4h-2zM16 10h2v4h-2z"/></svg><span data-i18n>Ports</span></button>
+      <button data-view="clients"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span data-i18n>Devices</span></button>
+      <button data-view="dhcp" hidden><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="3"/><path d="M20.2 18.2L22 20"/></svg><span data-i18n>DHCP</span></button>
+      <button data-view="vlans"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4"/></svg><span data-i18n>VLANs</span></button>
+      <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span data-i18n>Settings</span></button>
+    </nav>
+    <div class="side-foot">
+      <button class="ghost" data-act="theme" id="theme">Theme: auto</button>
+      <button class="ghost" data-act="lang" id="lang">Language</button>
+      <span class="pill user" id="user"></span>
+      <button class="ghost" data-act="logout" id="logout" hidden data-i18n>Sign out</button>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <div>
+        <h1 id="view-title"></h1>
+        <p class="meta" id="meta">Loading…</p>
+      </div>
+      <div class="pills" id="pills"></div>
+    </header>
+    <p class="banner" id="banner" role="alert" hidden></p>
+
+    <section class="view" data-view="overview">
+      <p class="verdict" id="verdict"></p>
+      <div class="grid tiles" id="tiles"></div>
+      <h2 data-i18n>Links between switches</h2>
+      <div class="card table-wrap"><table id="links"></table></div>
+      <div class="facts" id="facts"></div>
+    </section>
+
+    <section class="view" data-view="ports" hidden>
+      <div class="toolbar" id="sw-tabs"></div>
+      <article class="card" id="device"></article>
+      <h2 data-i18n>Ports</h2>
+      <div class="card table-wrap"><table id="ports"></table></div>
+    </section>
+
+    <section class="view" data-view="clients" hidden>
+      <div class="toolbar"><input type="search" id="q" placeholder="Search: name, IP, MAC, port…" data-i18n-placeholder autocomplete="off"></div>
+      <div class="card table-wrap"><table id="clients"></table></div>
+    </section>
+
+    <section class="view" data-view="dhcp" hidden>
+      <div class="toolbar" id="dhcp-tabs" hidden></div>
+      <p class="verdict" id="dhcp-state"></p>
+      <ul class="problems" id="dhcp-problems" hidden></ul>
+      <article class="card" id="dhcp-pending" hidden></article>
+      <div class="card-head"><h2 data-i18n>DHCP servers</h2><button data-act="srv-new" data-i18n>Add a server</button></div>
+      <div class="grid srvs" id="dhcp-srv"></div>
+      <div class="card-head"><h2 data-i18n>Reservations</h2><button data-act="res-new" data-i18n>Add a reservation</button></div>
+      <div class="card table-wrap"><table id="dhcp-res"></table></div>
+      <h2 data-i18n>Dynamic leases</h2>
+      <div class="card table-wrap"><table id="dhcp-dyn"></table></div>
+      <div id="dhcp-names-box" hidden>
+      <h2 data-i18n>Names from the leases</h2>
+      <div class="card table-wrap"><table id="dhcp-names"></table></div>
+      <p class="sub" id="dhcp-names-note"></p>
+      </div>
+    </section>
+
+    <section class="view" data-view="settings" hidden>
+      <div class="card-head"><h2 data-i18n>Switches</h2><button data-act="sw-new" data-i18n>Add a switch</button></div>
+      <div class="grid srvs" id="set-switches"></div>
+      <h2 data-i18n>Prepare a switch</h2>
+      <article class="card prep">
+        <p class="sub" data-i18n>Before adding a switch: paste this script in its terminal. It creates the accounts, the certificate and the encrypted API, reachable only from Cairn Net.</p>
+        <label><span data-i18n>Address of Cairn Net as the switch sees it</span><input id="prep-ip" placeholder="192.168.88.10" autocomplete="off"></label>
+        <pre class="mono" id="prep-script"></pre>
+        <div class="toolbar"><button data-act="prep-copy" data-i18n>Copy</button></div>
+      </article>
+      <h2 data-i18n>Git deploy key</h2>
+      <article class="card prep">
+        <p class="sub" data-i18n>Git mode: add this public key to each repository as a deploy key with write access. Cairn Net clones the repository with it and pushes one commit per change, under the name of whoever applies.</p>
+        <pre class="mono" id="git-key"></pre>
+        <div class="toolbar"><button data-act="key-copy" data-i18n>Copy</button></div>
+      </article>
+    </section>
+
+    <section class="view" data-view="vlans" hidden>
+      <div class="card table-wrap"><table id="vlans"></table></div>
+      <p class="sub" data-i18n>U = untagged (port VLAN), T = tagged. The bridge itself (the switch's own CPU) is left out.</p>
+    </section>
+  </main>
+</div>
+
+<dialog id="dlg" class="t-modal">
+  <form method="dialog">
+    <h3 id="dlg-title"></h3>
+    <div id="dlg-body"></div>
+    <menu>
+      <button type="button" value="cancel" id="dlg-cancel" data-i18n>Cancel</button>
+      <button value="ok" id="dlg-ok" class="primary">OK</button>
+    </menu>
+  </form>
+</dialog>
+</body>
+</html>

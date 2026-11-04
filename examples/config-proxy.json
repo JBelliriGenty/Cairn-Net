@@ -1,0 +1,10 @@
+{
+  "listen": "0.0.0.0:9093",
+  "title": "Network",
+  "subtitle": "MikroTik switches",
+  "lang": "en",
+  "trusted_proxies": ["172.18.0.1"],
+  "user_header": "Remote-User",
+  "groups_header": "Remote-Groups",
+  "require_groups": ["network-admins"]
+}
