@@ -14,6 +14,20 @@ TLS (`api-ssl`), with a read-only account by default.
 > [Cairn](https://github.com/JBelliriGenty/Cairn-NAS), the same panel for a
 > Debian + ZFS NAS.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-dark.png"><img src="docs/screenshots/overview-light.png" alt="Overview: switches, active ports, inter-switch links, devices, live traffic"></picture>
+
+<table>
+<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/ports-dark.png"><img src="docs/screenshots/ports-light.png" alt="Ports: front panel, health, per-port speed, VLANs, neighbour and traffic"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dhcp-dark.png"><img src="docs/screenshots/dhcp-light.png" alt="DHCP: servers with pool usage, reservations and the file behind them"></picture></td></tr>
+<tr><td align="center">Ports</td><td align="center">DHCP</td></tr>
+<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/clients-dark.png"><img src="docs/screenshots/clients-light.png" alt="Devices: MAC table with IP, switch, port and VLAN"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/vlans-dark.png"><img src="docs/screenshots/vlans-light.png" alt="VLANs: untagged and tagged ports per switch"></picture></td></tr>
+<tr><td align="center">Devices</td><td align="center">VLANs</td></tr>
+<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png"><img src="docs/screenshots/settings-light.png" alt="Settings: switches, mode, pinned certificate, switch preparation script"></picture></td><td></td></tr>
+<tr><td align="center">Settings</td><td></td></tr>
+</table>
+
+Screenshots follow your GitHub theme (light or dark); the panel has both.
+Demo data.
+
 ## What it does
 
 - **Overview**: every switch at a glance (ports up, traffic, CPU,
