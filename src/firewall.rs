@@ -34,7 +34,7 @@ pub const LISTS: &str = "address-list";
 const META: [&str; 7] = [".id", ".nextid", "bytes", "packets", "invalid", "dynamic", "creation-time"];
 
 /// Every row of `path`, all properties; a menu the device lacks reads as empty.
-fn all(api: &mut Api, path: &str) -> Result<Vec<Value>, String> {
+pub fn all(api: &mut Api, path: &str) -> Result<Vec<Value>, String> {
     match api.call(&[&format!("{path}/print")]) {
         Err(e) if e.starts_with("no such command") => Ok(vec![]),
         r => r,
@@ -70,7 +70,7 @@ fn yes(v: &str) -> bool {
 
 /// The properties of a row as they are written back: no read-only ones, no
 /// empty ones, `disabled` only when true.
-fn props(v: &Value) -> Row {
+pub fn props(v: &Value) -> Row {
     v.as_object().into_iter().flatten()
         .filter(|(k, _)| !META.contains(&k.as_str()))
         .filter_map(|(k, x)| Some((k.clone(), x.as_str()?.to_string())))
@@ -135,7 +135,7 @@ fn check_row(table: &str, r: &Row) -> Result<(), String> {
 }
 
 /// One script line that adds a row back (a failing line does not stop the rest).
-fn add_line(base: &str, r: &Row) -> String {
+pub fn add_line(base: &str, r: &Row) -> String {
     let kv: Vec<String> = r.iter().map(|(k, v)| if k == "disabled" { "disabled=yes".into() } else { format!("{k}={}", q(v)) }).collect();
     format!(":do {{ {} add {} }} on-error={{ :log warning {} }}", cli(base), kv.join(" "), q("cairn-net: a firewall row could not be put back"))
 }

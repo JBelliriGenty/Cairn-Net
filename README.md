@@ -21,8 +21,8 @@ TLS (`api-ssl`), with a read-only account by default.
 <tr><td align="center">Ports</td><td align="center">DHCP</td></tr>
 <tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/clients-dark.png"><img src="docs/screenshots/clients-light.png" alt="Devices: MAC table with IP, switch, port and VLAN"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/vlans-dark.png"><img src="docs/screenshots/vlans-light.png" alt="VLANs: untagged and tagged ports per switch"></picture></td></tr>
 <tr><td align="center">Devices</td><td align="center">VLANs</td></tr>
-<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png"><img src="docs/screenshots/settings-light.png" alt="Settings: switches, mode, pinned certificate, switch preparation script"></picture></td><td></td></tr>
-<tr><td align="center">Settings</td><td></td></tr>
+<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png"><img src="docs/screenshots/settings-light.png" alt="Settings: switches, mode, pinned certificate, switch preparation script"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/topology-dark.png"><img src="docs/screenshots/topology-light.png" alt="Topology: switches, links with live traffic, devices under their port"></picture></td></tr>
+<tr><td align="center">Settings</td><td align="center">Topology</td></tr>
 </table>
 
 Screenshots follow your GitHub theme (light or dark); the panel has both.
@@ -32,8 +32,16 @@ Demo data.
 
 - **Overview**: every switch at a glance (ports up, traffic, CPU,
   temperature, uptime, health sensors) and the links between switches.
+- **Topology**: a live map drawn by hand in SVG: the switches with their
+  front panel, the links between them (LACP, STP-blocked backups) with
+  their traffic, and every device under its port, with an icon for its
+  kind (guessed, or set by hand). Click through to the Ports, Devices or
+  Infrastructure page.
 - **Ports**: front panel per switch, speed, traffic, what is behind each
-  port.
+  port (a click opens that device, or the switch on the other side).
+- **Interfaces**: ports (enable, MTU, auto-negotiation, comment), bonds,
+  bridge ports and VLAN table, VLAN interfaces, STP state and SFP
+  diagnostics (temperature, optical power).
 - **Devices**: every MAC address the switches see, with its port, VLAN, IP
   address and name (DHCP leases, ARP, reverse DNS).
 - **VLANs**: which ports carry which VLAN, tagged or untagged.
@@ -48,7 +56,9 @@ Demo data.
   and their ports, NAT rules, RouterOS and firmware versions, available
   update, uptime. In direct mode, the identity, DNS servers, one address
   and the gateway can be changed, each change guarded by an automatic
-  rollback (below).
+  rollback (below); the switch can be restarted, and, when allowed in
+  Settings, a port switched between router (out of the bridge, masqueraded)
+  and bridge mode.
 - **Firewall**: filter, NAT, mangle and raw rules in order with their
   counters, address lists, interface lists, connection tracking. In direct
   or Git mode, one table at a time is edited (by hand or from templates:
@@ -56,6 +66,20 @@ Demo data.
   forward), previewed as API commands, then applied with an automatic
   rollback of the whole table. A change that could drop, redirect or
   re-route Cairn Net's own connection to the switch is refused.
+- **IP and routing**: addresses, static routes and routing tables, ARP,
+  pools, DHCP client, IPv6, global IP settings.
+- **System**: clock and NTP, live log and logging rules, users and
+  groups, scheduler and scripts, files (download, upload), export and
+  backup (download, restore), packages, certificates, SNMP, resources.
+- **Tools**: ping, traceroute, torch, bandwidth test, IP scan, netwatch,
+  packet capture (pcap download), each with a time limit and a Stop
+  button.
+- **Chip & QoS**: switch chip of CRS3xx (port mirroring, rate limits,
+  storm control, port isolation, hardware ACL rules, offload check),
+  IGMP/MLD snooping, simple and tree queues.
+- **Terminal**: run RouterOS commands per switch; read-only commands
+  (print, export, monitor) with the read account, the rest in direct mode,
+  every command logged, dangerous ones confirmed by typing the switch name.
 - **Settings**: switches are added from the page. Cairn Net reads the
   certificate of the switch first, you compare its fingerprint, then the
   accounts are tried. A RouterOS script to prepare a switch is shown there.
@@ -111,8 +135,8 @@ Settings shows a script to paste in the switch terminal (WebFig → Terminal,
 or SSH), filled with the address of Cairn Net. It creates:
 
 1. a **read** account (`read,api`);
-2. optionally a **write** account for direct mode (`read,write,api`, without
-   `policy`, `password`, `reboot` or `sensitive`);
+2. optionally a **write** account for direct mode, with limited
+   (`read,write,api,reboot`) or full rights (group `full`, see below);
 3. a self-signed certificate for `api-ssl`, with the service limited to the
    address of Cairn Net;
 
@@ -277,10 +301,46 @@ it, the switch puts the old settings back by itself and logs
 `cairn-net: change not confirmed, rolled back`. The preview shows both the
 commands and the rollback script.
 
-The interface Cairn Net reaches the switch through is never offered, and a
-new address may not overlap the network of the switch's management address
-or of Cairn Net's own address. Reset, password, VPN, router/bridge mode,
-NAT, reboot and upgrade are not done from here.
+Other addresses of the interface Cairn Net reaches the switch through are
+never offered, and a new address may not overlap the network of the
+switch's management address or of Cairn Net's own address, nor move an
+address whose network holds Cairn Net's address. Reset, password and VPN
+are not done from here.
+
+**The management address itself** can change when Settings reach the
+switch by IP address: Cairn Net arms the rollback, changes the address
+last, connects to the new address (same certificate pin), reads it back,
+removes the rollback by itself and saves the new address in Settings. If it
+cannot reach the switch within 45 s, Settings stay as they were and the
+switch takes its old address back.
+
+**Router/bridge mode** (prototype, off unless "Allow the router/bridge
+switch" is ticked for the switch in Settings): router mode takes a port out
+of its bridge and adds `srcnat masquerade out-interface=<port>`; bridge mode
+removes that masquerade and puts the port back. Same preview, rollback and
+Keep. Refused when the port or the bridge carries Cairn Net's path, when the
+NAT could catch the management packets, and while connection tracking is
+off: the first NAT rule starts it, which may cut open connections.
+
+**Rights of the write account.** The preparation script in Settings offers
+two choices. *Limited* (default): `read,write,api,reboot` — configuration
+and Restart, no accounts, no updates. *Full*: the built-in group `full` —
+every action, RouterOS updates included (RouterOS 7.25 refuses
+`check-for-updates` to any account without the `policy` right; tested with
+`reboot,test,ftp,sensitive`). With full rights, whoever controls Cairn Net
+controls the switch, accounts included: keep the account limited to Cairn
+Net's address and another admin way in. The Infrastructure page reads the
+write account's group from the switch, shows "full" or "limited" rights and
+greys out Restart without `reboot` and Update without `policy`.
+**Update** waits for `check-for-updates` to finish (it answers before),
+downloads, then restarts to install.
+
+**Admin access** (Infrastructure page) lists the switch's management
+services (`/ip service`: on or off, allowed addresses) and MAC-WinBox's
+interface list; in direct mode they are edited with the same 60 s rollback,
+for instance to restrict or close WinBox. api-ssl carries Cairn Net: it
+cannot be turned off nor closed to Cairn Net's address. One way in besides
+Cairn Net must stay (SSH, WinBox or MAC-WinBox), else the change is refused.
 
 The read account may not run `check-for-updates`: the page compares the
 installed RouterOS with the version MikroTik publishes for the switch's
@@ -289,8 +349,8 @@ by Cairn Net at most every 6 hours).
 
 ## Security notes
 
-- Read-only accounts by default; the write account has no `policy`,
-  `password`, `reboot` or `sensitive` rights.
+- Read-only accounts by default; the write account is limited
+  (`read,write,api,reboot`) unless you choose full rights.
 - The switch certificate is pinned (SHA-256 fingerprint).
 - Passwords of the switch accounts are kept in `data/settings.json`
   (mode 600, owner of the container), never sent back to the page.

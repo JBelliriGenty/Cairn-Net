@@ -1,0 +1,283 @@
+{
+ "switch": [
+  {
+   ".id": "*0",
+   "name": "switch1",
+   "type": "Marvell-98DX3236",
+   "mirror-target": "none",
+   "rspan": "false",
+   "rspan-ingress-vlan-id": "1",
+   "rspan-egress-vlan-id": "1",
+   "l3-hw-offloading": "false",
+   "qos-hw-offloading": "false",
+   "driver-rx-byte": "444660588",
+   "driver-rx-packet": "5420377",
+   "driver-tx-byte": "3703057057",
+   "driver-tx-packet": "3395812",
+   "custom-drop-packet": "9860185",
+   "not-learned": "0",
+   "invalid": "false"
+  }
+ ],
+ "port": [
+  {
+   ".id": "*2",
+   "name": "ether1",
+   "switch": "switch1",
+   "mirror-ingress": "false",
+   "mirror-egress": "false",
+   "storm-rate": "100",
+   "limit-unknown-unicasts": "false",
+   "limit-unknown-multicasts": "false",
+   "limit-broadcasts": "true",
+   "rx-bytes": "657963376",
+   "rx-pause": "0",
+   "rx-fcs-error": "0",
+   "tx-bytes": "456167536",
+   "tx-pause": "0",
+   "tx-drop-packet": "203",
+   "running": "true",
+   "invalid": "false"
+  },
+  {
+   ".id": "*3",
+   "name": "ether2",
+   "switch": "switch1",
+   "mirror-ingress": "false",
+   "mirror-egress": "false",
+   "storm-rate": "100",
+   "limit-unknown-unicasts": "false",
+   "limit-unknown-multicasts": "false",
+   "limit-broadcasts": "true",
+   "rx-bytes": "58310217",
+   "rx-pause": "0",
+   "rx-fcs-error": "0",
+   "tx-bytes": "1039591248",
+   "tx-pause": "0",
+   "tx-drop-packet": "0",
+   "running": "true",
+   "invalid": "false"
+  },
+  {
+   ".id": "*1A",
+   "name": "sfp-sfpplus1",
+   "switch": "switch1",
+   "mirror-ingress": "false",
+   "mirror-egress": "false",
+   "storm-rate": "100",
+   "limit-unknown-unicasts": "false",
+   "limit-unknown-multicasts": "false",
+   "limit-broadcasts": "true",
+   "rx-bytes": "3124683084",
+   "rx-pause": "0",
+   "rx-fcs-error": "0",
+   "tx-bytes": "4209953334",
+   "tx-pause": "0",
+   "tx-drop-packet": "0",
+   "running": "true",
+   "invalid": "false"
+  },
+  {
+   ".id": "*1B",
+   "name": "sfp-sfpplus2",
+   "switch": "switch1",
+   "mirror-ingress": "false",
+   "mirror-egress": "false",
+   "storm-rate": "100",
+   "limit-unknown-unicasts": "false",
+   "limit-unknown-multicasts": "false",
+   "limit-broadcasts": "true",
+   "rx-bytes": "1446968134",
+   "rx-pause": "0",
+   "rx-fcs-error": "0",
+   "tx-bytes": "556186138",
+   "tx-pause": "0",
+   "tx-drop-packet": "0",
+   "running": "true",
+   "invalid": "false"
+  }
+ ],
+ "isolation": [
+  {
+   ".id": "*2",
+   "name": "ether1",
+   "switch": "switch1",
+   "invalid": "false"
+  },
+  {
+   ".id": "*3",
+   "name": "ether2",
+   "switch": "switch1",
+   "invalid": "false"
+  },
+  {
+   ".id": "*1A",
+   "name": "sfp-sfpplus1",
+   "switch": "switch1",
+   "invalid": "false"
+  },
+  {
+   ".id": "*1B",
+   "name": "sfp-sfpplus2",
+   "switch": "switch1",
+   "invalid": "false"
+  }
+ ],
+ "rule": [],
+ "bridge": [
+  {
+   ".id": "*1C",
+   "name": "bridge",
+   "mtu": "auto",
+   "actual-mtu": "1500",
+   "l2mtu": "1592",
+   "arp": "enabled",
+   "arp-timeout": "auto",
+   "mac-address": "D0:EA:11:72:D0:9F",
+   "protocol-mode": "rstp",
+   "fast-forward": "true",
+   "igmp-snooping": "false",
+   "auto-mac": "false",
+   "admin-mac": "D0:EA:11:72:D0:9F",
+   "ageing-time": "5m",
+   "priority": "0x8000",
+   "max-message-age": "20s",
+   "forward-delay": "15s",
+   "transmit-hold-count": "6",
+   "vlan-filtering": "true",
+   "ether-type": "0x8100",
+   "pvid": "10",
+   "frame-types": "admit-all",
+   "ingress-filtering": "true",
+   "dhcp-snooping": "false",
+   "dhcpv6-snooping": "false",
+   "ra-guard": "false",
+   "port-cost-mode": "long",
+   "mvrp": "false",
+   "max-learned-entries": "auto",
+   "mlag-peer-port": "none",
+   "mlag-priority": "128",
+   "mlag-heartbeat": "5s",
+   "mlag-init-delay": "1m",
+   "mlag-lacp-fallback": "true",
+   "managed": "false",
+   "dynamic": "false",
+   "running": "true",
+   "disabled": "false"
+  }
+ ],
+ "bport": [
+  {
+   ".id": "*0",
+   "interface": "ether1",
+   "bridge": "bridge",
+   "hw": "true",
+   "multicast-router": "temporary-query",
+   "fast-leave": "false",
+   "hw-offload-group": "switch1",
+   "hw-offload": "true",
+   "inactive": "false",
+   "dynamic": "false",
+   "disabled": "false"
+  },
+  {
+   ".id": "*1",
+   "interface": "ether2",
+   "bridge": "bridge",
+   "hw": "true",
+   "multicast-router": "temporary-query",
+   "fast-leave": "false",
+   "hw-offload-group": "switch1",
+   "hw-offload": "true",
+   "inactive": "false",
+   "dynamic": "false",
+   "disabled": "false"
+  },
+  {
+   ".id": "*1A",
+   "interface": "bond1",
+   "bridge": "bridge",
+   "hw": "true",
+   "multicast-router": "temporary-query",
+   "fast-leave": "false",
+   "hw-offload-group": "switch1",
+   "hw-offload": "true",
+   "inactive": "false",
+   "dynamic": "false",
+   "disabled": "false"
+  }
+ ],
+ "type": [
+  {
+   ".id": "*1",
+   "name": "default",
+   "kind": "pfifo",
+   "pfifo-limit": "50",
+   "default": "true"
+  },
+  {
+   ".id": "*2",
+   "name": "ethernet-default",
+   "kind": "pfifo",
+   "pfifo-limit": "50",
+   "default": "true"
+  },
+  {
+   ".id": "*3",
+   "name": "wireless-default",
+   "kind": "sfq",
+   "sfq-perturb": "5",
+   "sfq-allot": "1514",
+   "default": "true"
+  }
+ ],
+ "arp": [
+  {
+   ".id": "*2",
+   "address": "192.168.99.11",
+   "mac-address": "D0:EA:11:EC:52:51",
+   "interface": "mgmt99"
+  }
+ ],
+ "hosts": [
+  {
+   ".id": "*181E3",
+   "mac-address": "D0:EA:11:EC:52:51",
+   "interface": "bond1",
+   "bridge": "bridge",
+   "on-interface": "bond1"
+  },
+  {
+   ".id": "*181EA",
+   "mac-address": "D0:EA:11:EC:52:51",
+   "interface": "bond1",
+   "bridge": "bridge",
+   "on-interface": "bond1"
+  },
+  {
+   ".id": "*181F5",
+   "mac-address": "D0:EA:11:EC:52:51",
+   "interface": "bond1",
+   "bridge": "bridge",
+   "on-interface": "bond1"
+  }
+ ],
+ "bonds": [
+  {
+   "name": "bond1",
+   "slaves": "sfp-sfpplus1,sfp-sfpplus2"
+  }
+ ],
+ "routes": [
+  {
+   ".id": "*80000002",
+   "dst-address": "0.0.0.0/0",
+   "gateway": "192.168.99.11"
+  },
+  {
+   ".id": "*20185030",
+   "dst-address": "192.168.99.0/24",
+   "gateway": "mgmt99"
+  }
+ ]
+}

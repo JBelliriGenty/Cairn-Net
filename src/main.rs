@@ -23,16 +23,22 @@
 //! Usage: cairn-net /etc/cairn-net.json
 //!        cairn-net hash-password   (reads a password on stdin, prints its hash)
 
+mod chip;
 mod dhcp;
 mod direct;
 mod dns;
 mod firewall;
 mod git;
+mod ifaces;
 mod infra;
+mod ip;
 mod login;
 mod servers;
 mod settings;
 mod statics;
+mod system;
+mod term;
+mod tools;
 mod topo;
 
 use openssl::hash::MessageDigest;
@@ -51,6 +57,12 @@ use tiny_http::{Header, Method, Request, Response, Server};
 const INDEX: &str = include_str!("../www/index.html");
 const JS: &str = include_str!("../www/panel.js");
 const TOPO_JS: &str = include_str!("../www/topo.js");
+const SYSTEM_JS: &str = include_str!("../www/system.js");
+const IP_JS: &str = include_str!("../www/ip.js");
+const IFACES_JS: &str = include_str!("../www/ifaces.js");
+const TOOLS_JS: &str = include_str!("../www/tools.js");
+const CHIP_JS: &str = include_str!("../www/chip.js");
+const TERM_JS: &str = include_str!("../www/term.js");
 const CSS: &str = include_str!("../www/panel.css");
 const ICON: &str = include_str!("../www/icon.svg");
 const I18N: &str = include_str!("../www/i18n.js");
@@ -273,6 +285,11 @@ impl Api {
 
     /// One command; the `!re` replies as objects ("=key=value" words).
     pub fn call(&mut self, words: &[&str]) -> Result<Vec<Value>, String> {
+        self.call_done(words).map(|r| r.0)
+    }
+
+    /// Like `call`, with the attributes of `!done` (e.g. `ret`).
+    pub fn call_done(&mut self, words: &[&str]) -> Result<(Vec<Value>, Map<String, Value>), String> {
         self.0.write_all(&encode(words)).map_err(|e| e.to_string())?;
         let (mut rows, mut trap) = (Vec::new(), None);
         loop {
@@ -283,7 +300,7 @@ impl Api {
                 Some("!re") => rows.push(Value::Object(attrs)),
                 Some("!trap") => trap = Some(attrs.get("message").and_then(Value::as_str).unwrap_or("trap").to_string()),
                 Some("!fatal") => return Err(s.get(1).cloned().unwrap_or_else(|| "fatal".into())),
-                Some("!done") => return trap.map_or(Ok(rows), Err),
+                Some("!done") => return trap.map_or(Ok((rows, attrs)), Err),
                 _ => {} // !empty (RouterOS 7.18+), unknown
             }
         }
@@ -334,8 +351,9 @@ fn fast_one(api: &mut Api) -> Result<Value, String> {
     }))
 }
 
-const MONITOR_KEYS: [&str; 10] = ["name", "status", "rate", "full-duplex", "sfp-module-present", "sfp-vendor-name",
-    "sfp-vendor-part-number", "sfp-connector-type", "sfp-temperature", "sfp-rx-power"];
+const MONITOR_KEYS: [&str; 17] = ["name", "status", "rate", "full-duplex", "sfp-module-present", "sfp-vendor-name",
+    "sfp-vendor-part-number", "sfp-connector-type", "sfp-temperature", "sfp-rx-power", "sfp-tx-power", "sfp-supply-voltage",
+    "sfp-tx-bias-current", "sfp-vendor-serial", "sfp-wavelength", "sfp-type", "sfp-link-length-copper"];
 
 fn slow_one(api: &mut Api) -> Result<Value, String> {
     let eth: Vec<String> = print(api, "/interface/ethernet", "name", &[])?.iter().filter_map(|r| r["name"].as_str().map(String::from)).collect();
@@ -686,6 +704,20 @@ fn infra_view(name: &str) -> Value {
         // the interface Cairn Net reaches the switch through: shown, never offered for editing
         if let Ok(p) = path_of(&sw.cfg, api) {
             v["mgmt_iface"] = json!(infra::mgmt_iface(&v, &p));
+            // the address Cairn Net connects to: editable, the app then follows it
+            v["mgmt_address"] = json!(v["addresses"].as_array().into_iter().flatten()
+                .find(|a| infra::cidr(a["address"].as_str().unwrap_or("")).is_some_and(|(ip, _, _)| ip == p.switch)).map(|a| a[".id"].clone()));
+            v["host_is_ip"] = json!(sw.cfg.host.parse::<std::net::Ipv4Addr>().is_ok());
+        }
+        // what the write account may do (its group's policies): the page offers only that
+        if !sw.cfg.write_user.is_empty() {
+            if let Some(u) = print(api, "/user", "group", &[&format!("?name={}", sw.cfg.write_user)])?.pop() {
+                let g = u["group"].as_str().unwrap_or("").to_string();
+                if let Some(p) = print(api, "/user/group", "policy", &[&format!("?name={g}")])?.pop() {
+                    v["write_policy"] = json!(p["policy"].as_str().unwrap_or("").split(',').filter(|x| !x.is_empty() && !x.starts_with('!')).collect::<Vec<_>>());
+                    v["write_group"] = json!(g);
+                }
+            }
         }
         Ok(v)
     }).unwrap_or_else(|e| json!({"error": e}));
@@ -693,10 +725,95 @@ fn infra_view(name: &str) -> Value {
         // outside with_api: not holding the switch's connection while fetching
         v["newest"] = json!(infra::newest(v["update"]["channel"].as_str().unwrap_or("stable")));
     }
+    reboot_state(&sw.cfg.name, &mut v);
     v["name"] = json!(sw.cfg.name);
     v["mode"] = json!(sw.cfg.mode);
+    v["infra_nat"] = json!(sw.cfg.infra_nat);
     v["rollback_s"] = json!(infra::ROLLBACK_S);
     v
+}
+
+/* Restart and update (direct mode, the switch's name typed as confirmation).
+   REBOOTS: switch -> {action, from, to, at (ms)} until it answers again with
+   an uptime shorter than the time since the restart. */
+static REBOOTS: Mutex<BTreeMap<String, Value>> = Mutex::new(BTreeMap::new());
+
+fn reboot_state(name: &str, v: &mut Value) {
+    let mut g = REBOOTS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = g.get(name).cloned() else { return };
+    let gone = now_ms().saturating_sub(e["at"].as_u64().unwrap_or(0)) / 1000;
+    let mut st = e.clone();
+    st["elapsed"] = json!(gone);
+    if v["error"].is_null() && infra::uptime_s(v["resource"]["uptime"].as_str().unwrap_or("")) < gone {
+        st["back"] = json!(true);
+        st["version"] = v["resource"]["version"].clone();
+        g.remove(name);
+    } else if gone > 900 {
+        st["late"] = json!(true);
+        g.remove(name);
+    }
+    if !v["error"].is_null() && st["late"].is_null() {
+        v["down"] = v["error"].take(); // expected while it restarts
+    }
+    v["reboot"] = st;
+}
+
+fn infra_power(v: &Value, user: &str) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let c = &sw.cfg;
+    if v["confirm"].as_str() != Some(c.name.as_str()) {
+        return Err("type the switch's name to confirm".into());
+    }
+    let upgrade = match v["action"].as_str() {
+        Some("reboot") => false,
+        Some("upgrade") => true,
+        _ => return Err("unknown action".into()),
+    };
+    if REBOOTS.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&c.name) {
+        return Err("the switch is already restarting".into());
+    }
+    let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
+    if rollback_left(&mut api)? {
+        return Err("a change is still waiting for its confirmation: confirm it or wait for the rollback".into());
+    }
+    let from = print(&mut api, "/system/resource", "version", &[])?.pop().unwrap_or_default()["version"].clone();
+    let mut to = Value::Null;
+    if upgrade {
+        // the switch's own check, then the download; the restart installs it
+        api.call(&["/system/package/update/check-for-updates", "=once="]).map_err(|e| if e.contains("permission") {
+            format!("update refused by the switch: {e} (RouterOS only lets an account with the policy right update: give the write account full rights (Settings, preparation script))")
+        } else {
+            format!("check for updates: {e}")
+        })?;
+        // check-for-updates answers before it is done ("finding out latest version..."): wait for a final status
+        let mut u = Value::Null;
+        for _ in 0..30 {
+            u = print(&mut api, "/system/package/update", "installed-version,latest-version,status", &[])?.pop().unwrap_or_default();
+            if !u["status"].as_str().unwrap_or("").ends_with("...") {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        let (inst, latest) = (u["installed-version"].as_str().unwrap_or(""), u["latest-version"].as_str().unwrap_or(""));
+        if latest.is_empty() || latest == inst {
+            return Err(format!("nothing to install ({})", u["status"].as_str().unwrap_or("no newer version")));
+        }
+        to = json!(latest);
+        api.call(&["/system/package/update/download"]).map_err(|e| format!("download: {e}"))?;
+    }
+    REBOOTS.lock().unwrap_or_else(|e| e.into_inner())
+        .insert(c.name.clone(), json!({"action": if upgrade { "upgrade" } else { "reboot" }, "from": from, "to": to, "at": now_ms()}));
+    // the connection goes with the switch: only a refusal is an error
+    if let Err(e) = api.call(&["/system/reboot"]) {
+        if e.contains("permission") {
+            REBOOTS.lock().unwrap_or_else(|e| e.into_inner()).remove(&c.name);
+            return Err(format!("restart refused by the switch: {e} (the write account's group needs the reboot policy)"));
+        }
+    }
+    drop(api);
+    eprintln!("{} on {} by {user}: {from}{}", if upgrade { "upgrade" } else { "reboot" }, c.name, to.as_str().map_or(String::new(), |t| format!(" -> {t}")));
+    forget_cache();
+    Ok(json!({"ok": true, "from": from, "to": to}))
 }
 
 /// Firewall page: every switch, read account (src/firewall.rs).
@@ -744,14 +861,34 @@ fn direct_switch(v: &Value) -> Result<Arc<Switch>, String> {
     Ok(sw)
 }
 
+/// The commands of a change and, when it moves the address Cairn Net
+/// connects to, that new address.
+fn infra_plan(c: &SwitchCfg, api: &mut Api, w: &infra::Want) -> Result<(Vec<direct::Cmd>, Vec<String>, Option<std::net::Ipv4Addr>), String> {
+    let path = path_of(c, api)?;
+    let live = infra::read(api)?;
+    if let Some(m) = &w.mode {
+        if !c.infra_nat {
+            return Err("router/bridge mode and NAT are off for this switch (Settings)".into());
+        }
+        if w.identity.is_some() || w.dns.is_some() || w.address.is_some() || w.gateway.is_some() || !w.services.is_empty() || w.mac_winbox.is_some() {
+            return Err("router/bridge mode is changed on its own".into());
+        }
+        let (cmds, undo) = infra::plan_mode(&live, &firewall::read(api)?, m, &path, c.port)?;
+        return Ok((cmds, undo, None));
+    }
+    let moves = infra::moves(&live, w, &path);
+    if moves.is_some() && c.host.parse::<std::net::Ipv4Addr>().is_err() {
+        return Err(format!("Settings reach this switch by name ({}): Cairn Net cannot follow a new address, change the name's DNS instead", c.host));
+    }
+    let (cmds, undo) = infra::plan(&live, w, &path)?;
+    Ok((cmds, undo, moves))
+}
+
 fn infra_preview(v: &Value) -> Result<Value, String> {
     let sw = direct_switch(v)?;
     let w = infra::Want::from_json(&v["want"]);
-    let (cmds, undo) = with_api(&sw, |api| {
-        let path = path_of(&sw.cfg, api)?;
-        infra::plan(&infra::read(api)?, &w, &path)
-    })?;
-    Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S}))
+    let (cmds, undo, moves) = with_api(&sw, |api| infra_plan(&sw.cfg, api, &w))?;
+    Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S, "moves": moves.map(|m| m.to_string())}))
 }
 
 fn rollback_left(api: &mut Api) -> Result<bool, String> {
@@ -800,10 +937,81 @@ fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
     let sw = direct_switch(v)?;
     let c = &sw.cfg;
     let w = infra::Want::from_json(&v["want"]);
+    let moves = with_api(&sw, |api| infra_plan(c, api, &w))?.2;
+    if let Some(new) = moves {
+        return move_apply(c, user, &w, new);
+    }
     guarded_apply(c, user, "infra", |api| {
-        let path = path_of(c, api)?;
-        infra::plan(&infra::read(api)?, &w, &path)
-    }, |api| Ok(infra::matches(&infra::read(api)?, &w)))
+        let (cmds, undo, moves) = infra_plan(c, api, &w)?;
+        if moves.is_some() {
+            return Err("the switch changed meanwhile: reload".into());
+        }
+        Ok((cmds, undo))
+    }, |api| match &w.mode {
+        Some(m) => Ok(infra::matches_mode(&infra::read(api)?, &firewall::read(api)?, m)),
+        None => Ok(infra::matches(&infra::read(api)?, &w)),
+    })
+}
+
+/// The address Cairn Net connects to moves: rollback armed, commands (that
+/// address last), then the app reaches the switch at the new address, reads
+/// it back, removes the rollback itself and saves the new address in
+/// Settings. Not reached before the rollback is due: Settings stay as they
+/// were and the switch takes its old address back.
+fn move_apply(c: &SwitchCfg, user: &str, w: &infra::Want, new: std::net::Ipv4Addr) -> Result<Value, String> {
+    let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
+    if rollback_left(&mut api)? {
+        return Err("a change is still waiting for its confirmation: confirm it or wait for the rollback".into());
+    }
+    let (cmds, undo, moves) = infra_plan(c, &mut api, w)?;
+    if moves != Some(new) {
+        return Err("the switch changed meanwhile: reload".into());
+    }
+    let (done, err) = direct::run(&mut api, &[infra::arm(&undo)]);
+    if done == 0 {
+        return Err(format!("rollback not armed, nothing changed: {}", err.unwrap_or_default()));
+    }
+    let started = Instant::now();
+    let (done, err) = direct::run(&mut api, &cmds);
+    drop(api);
+    forget_cache();
+    let shown = infra::show_all(&cmds);
+    let pending = |e: String| json!({"ok": false, "pending": true, "done": done, "commands": shown, "error": e, "rollback_s": infra::ROLLBACK_S,
+        "left_s": infra::ROLLBACK_S.saturating_sub(started.elapsed().as_secs())});
+    if err.is_some() && done + 1 < cmds.len() {
+        // stopped before the address: it never moved
+        return Ok(pending(err.unwrap_or_default()));
+    }
+    let mut c2 = c.clone();
+    c2.host = new.to_string();
+    let reach = || -> Result<(), String> {
+        let mut a = Api::connect(&c2, &c2.write_user, &c2.write_password)?;
+        if !infra::matches(&infra::read(&mut a)?, w) {
+            return Err("read back differs".into());
+        }
+        a.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)]).map(|_| ())
+    };
+    // ponytail: fixed 15 s margin before the rollback is due
+    let res = loop {
+        match reach() {
+            Ok(()) => break Ok(()),
+            Err(e) if started.elapsed() + Duration::from_secs(15) < Duration::from_secs(infra::ROLLBACK_S) => {
+                eprintln!("infra move on {}: {new} not reached yet: {e}", c.name);
+                std::thread::sleep(Duration::from_secs(3));
+            }
+            Err(e) => break Err(e),
+        }
+    };
+    if let Err(e) = res {
+        eprintln!("infra move on {} by {user}: {new} not reached ({e}), the switch rolls back", c.name);
+        return Ok(pending(format!("Cairn Net could not reach the switch at {new} ({e}): Settings unchanged, the switch takes its old address back")));
+    }
+    // rollback gone: from now on the switch only answers at the new address
+    let saved = settings::set_host(&c.name, &c2.host);
+    eprintln!("infra move on {} by {user}: {} -> {new}, kept, settings {}", c.name, c.host, saved.as_ref().map_or_else(|e| format!("NOT saved: {e}"), |_| "saved".into()));
+    forget_cache();
+    saved.map_err(|e| format!("the switch now answers at {new}, but Settings could not be saved ({e}): set this address in Settings"))?;
+    Ok(json!({"ok": true, "moved": new.to_string(), "commands": shown, "done": done, "verified": true, "pending": false}))
 }
 
 /// Git mode for the firewall: a repository and a firewall file in it.
@@ -981,6 +1189,76 @@ fn infra_confirm(v: &Value, user: &str) -> Result<Value, String> {
     Ok(json!({"ok": true}))
 }
 
+/* ---------- IP and routing (src/ip.rs) ---------- */
+
+fn ip_view(name: &str) -> Value {
+    let Some(sw) = settings::get(name) else { return json!({"error": format!("{name}: unknown switch")}) };
+    let mut v = with_api(&sw, |api| {
+        let mut v = ip::read(api)?;
+        v["rollback"] = json!(print(api, "/system/scheduler", "name,next-run", &[&format!("?name={}", infra::ROLLBACK)])?.pop());
+        if let Ok(p) = path_of(&sw.cfg, api) {
+            v["mgmt_iface"] = json!(infra::mgmt_iface(&json!({"addresses": v["menus"]["address"]}), &p));
+            v["switch_ip"] = json!(p.switch.to_string());
+            v["app"] = json!(p.app.map(|a| a.to_string()));
+        }
+        Ok(v)
+    }).unwrap_or_else(|e| json!({"error": e}));
+    v["name"] = json!(sw.cfg.name);
+    v["mode"] = json!(sw.cfg.mode);
+    v["rollback_s"] = json!(infra::ROLLBACK_S);
+    v
+}
+
+/// Moving the address Cairn Net connects to goes through the Infrastructure
+/// page's move (Cairn Net follows the switch, Settings updated).
+fn ip_move(v: &Value, id: &str, addr: &str) -> Value {
+    json!({"switch": v["switch"], "want": {"address": {"id": id, "address": addr}}})
+}
+
+type IpPlan = Result<(Vec<direct::Cmd>, Vec<String>, Vec<String>), (String, String)>;
+
+/// The commands, rollback and warnings of a change, or (.id, address) when
+/// it is a move of the management address.
+fn ip_plan(c: &SwitchCfg, api: &mut Api, w: &ip::Want) -> Result<IpPlan, String> {
+    let path = path_of(c, api)?;
+    let live = ip::read(api)?;
+    if let Some(m) = ip::mgmt_move(&live, w, &path) {
+        return Ok(Err(m));
+    }
+    ip::plan(&live, w, &path).map(Ok)
+}
+
+fn ip_preview(v: &Value) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let w = ip::Want::from_json(v)?;
+    match with_api(&sw, |api| ip_plan(&sw.cfg, api, &w))? {
+        Ok((cmds, undo, warn)) => Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S, "warnings": warn})),
+        Err((id, a)) => infra_preview(&ip_move(v, &id, &a)),
+    }
+}
+
+fn ip_apply(v: &Value, user: &str) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let c = &sw.cfg;
+    let w = ip::Want::from_json(v)?;
+    if let Err((id, a)) = with_api(&sw, |api| ip_plan(c, api, &w))? {
+        return infra_apply(&ip_move(v, &id, &a), user);
+    }
+    guarded_apply(c, user, &format!("ip {}", w.menu.key), |api| match ip_plan(c, api, &w)? {
+        Ok((cmds, undo, _)) => Ok((cmds, undo)),
+        Err(_) => Err("the switch changed meanwhile: reload".into()),
+    }, |api| {
+        // a row just added can read incomplete for a moment (ND on 7.25): read again before saying it differs
+        for _ in 0..2 {
+            if ip::matches(&ip::read(api)?, &w) {
+                return Ok(true);
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        Ok(ip::matches(&ip::read(api)?, &w))
+    })
+}
+
 /* ---------- Settings ---------- */
 
 fn settings_view() -> Value {
@@ -1085,6 +1363,12 @@ fn handle(cfg: &'static Config, mut r: Request) {
             (Method::Get, "/") => return respond(r, 200, INDEX.into(), "text/html"),
             (Method::Get, "/panel.js") => return respond(r, 200, JS.into(), "text/javascript"),
             (Method::Get, "/topo.js") => return respond(r, 200, TOPO_JS.into(), "text/javascript"),
+            (Method::Get, "/system.js") => return respond(r, 200, SYSTEM_JS.into(), "text/javascript"),
+            (Method::Get, "/ip.js") => return respond(r, 200, IP_JS.into(), "text/javascript"),
+            (Method::Get, "/ifaces.js") => return respond(r, 200, IFACES_JS.into(), "text/javascript"),
+            (Method::Get, "/tools.js") => return respond(r, 200, TOOLS_JS.into(), "text/javascript"),
+            (Method::Get, "/chip.js") => return respond(r, 200, CHIP_JS.into(), "text/javascript"),
+            (Method::Get, "/term.js") => return respond(r, 200, TERM_JS.into(), "text/javascript"),
             (Method::Get, "/panel.css") => return respond(r, 200, CSS.into(), "text/css"),
             (Method::Get, "/i18n.js") => return respond(r, 200, I18N.into(), "text/javascript"),
             (Method::Post, "/api/login") => {
@@ -1121,7 +1405,8 @@ fn handle(cfg: &'static Config, mut r: Request) {
             return respond(r, 400, json!({"error": "invalid request"}).to_string(), "application/json");
         }
         let mut body = String::new();
-        let _ = r.as_reader().take(65536).read_to_string(&mut body);
+        // file uploads (System page) come base64-encoded in their JSON
+        let _ = r.as_reader().take(if path == "/api/system/upload" { 1 << 20 } else { 65536 }).read_to_string(&mut body);
         let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
         // commit author: what the authenticating proxy says (e.g. Authelia: Remote-Name,
         // Remote-Email); with the built-in sign-in these headers come from the browser
@@ -1145,8 +1430,23 @@ fn handle(cfg: &'static Config, mut r: Request) {
             "/api/firewall/apply" => firewall_apply(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/firewall/confirm" => firewall_confirm(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/firewall/import" => firewall_import(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/ip/preview" => ip_preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/ip/apply" => ip_apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/ifaces/preview" => ifaces::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/ifaces/apply" => ifaces::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/confirm" => infra_confirm(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/infra/power" => infra_power(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/chip/preview" => chip::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/chip/apply" => chip::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/settings/probe" => probe(&v),
+            p if p.starts_with("/api/system/") => system::post(p, &v, &user),
+            "/api/tools/start" => tools::start(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/tools/stop" => tools::stop(&v),
+            "/api/term/run" => term::run(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/tools/netwatch/preview" => tools::netwatch(&v, &user, false).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/tools/netwatch/apply" => tools::netwatch(&v, &user, true).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/tools/grant/preview" => tools::grant(&v, &user, false).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/tools/grant/apply" => tools::grant(&v, &user, true).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             // the app's own data, nothing is written to the switches
             "/api/kinds" => match topo::set_label(&v) {
                 Ok(()) => {
@@ -1174,6 +1474,13 @@ fn handle(cfg: &'static Config, mut r: Request) {
         "/" => respond(r, 200, INDEX.into(), "text/html"),
         "/panel.js" => respond(r, 200, JS.into(), "text/javascript"),
         "/topo.js" => respond(r, 200, TOPO_JS.into(), "text/javascript"),
+        "/system.js" => respond(r, 200, SYSTEM_JS.into(), "text/javascript"),
+        p if p == "/api/system" || p.starts_with("/api/system/") => system::respond(r),
+        "/ip.js" => respond(r, 200, IP_JS.into(), "text/javascript"),
+        "/ifaces.js" => respond(r, 200, IFACES_JS.into(), "text/javascript"),
+        "/tools.js" => respond(r, 200, TOOLS_JS.into(), "text/javascript"),
+        "/chip.js" => respond(r, 200, CHIP_JS.into(), "text/javascript"),
+        "/term.js" => respond(r, 200, TERM_JS.into(), "text/javascript"),
         "/api/kinds" => respond(r, 200, json!({"kinds": topo::kinds(), "all": topo::KINDS}).to_string(), "application/json"),
         "/panel.css" => respond(r, 200, CSS.into(), "text/css"),
         "/i18n.js" => respond(r, 200, I18N.into(), "text/javascript"),
@@ -1192,6 +1499,32 @@ fn handle(cfg: &'static Config, mut r: Request) {
         "/api/infra" => {
             let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
             respond(r, 200, infra_view(&q).to_string(), "application/json")
+        }
+        "/api/ip" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, ip_view(&q).to_string(), "application/json")
+        }
+        "/api/ifaces" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, ifaces::view(&q).to_string(), "application/json")
+        }
+        "/api/tools" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, tools::view(&q).to_string(), "application/json")
+        }
+        "/api/tools/run" | "/api/tools/pcap" => {
+            let id = r.url().split_once("?id=").and_then(|(_, n)| n.split('&').next()?.parse().ok()).unwrap_or(0);
+            if path == "/api/tools/run" {
+                return respond(r, 200, tools::poll(id).to_string(), "application/json");
+            }
+            let Some((data, name)) = tools::pcap(id) else { return respond(r, 404, "no capture".into(), "text/plain") };
+            let h = |k: &str, v: &str| Header::from_bytes(k, v).unwrap();
+            let _ = r.respond(Response::from_data(data).with_header(h("Content-Type", "application/vnd.tcpdump.pcap"))
+                .with_header(h("Content-Disposition", &format!("attachment; filename=\"{name}\""))).with_header(h("Cache-Control", "no-store")));
+        }
+        "/api/chip" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, chip::view(&q).to_string(), "application/json")
         }
         "/api/firewall" => {
             let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());

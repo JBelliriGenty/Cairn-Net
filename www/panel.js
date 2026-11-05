@@ -8,7 +8,7 @@ const FAST_MS = 3000;   // resources, health, interface counters
 const SLOW_MS = 20000;  // links, VLANs, neighbours, MAC tables, leases
 const HIST = 60;        // sparkline points (3 min at 3 s)
 const ENTER_MS = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 650;
-const VIEWS = { overview: "Overview", topology: "Topology", ports: "Ports", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", infra: "Infrastructure", firewall: "Firewall", settings: "Settings" };
+const VIEWS = { overview: "Overview", topology: "Topology", ports: "Ports", ifaces: "Interfaces", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", infra: "Infrastructure", ip: "IP and routing", firewall: "Firewall", system: "System", chip: "Chip & QoS", settings: "Settings" };
 
 let CFG = { switches: [] };
 let D = null, CHANGES = [], PREVIEW = null; // /api/dhcp, pending reservation changes, their preview
@@ -250,7 +250,7 @@ async function settingsSaved(res) {
 }
 
 async function swForm(s, typed, err) {
-  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "", git_fw_path: "", git_dns_path: "", dns: "none", dns_targets: [], dns_servers: [] }, s || {}, typed || {});
+  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "", git_fw_path: "", git_dns_path: "", dns: "none", dns_targets: [], dns_servers: [], infra_nat: false }, s || {}, typed || {});
   const inp = (k, label, val, more = "") => "<label>" + esc(t(label)) + '<input name="' + k + '" value="' + esc(val) + '"' + more + "></label>";
   const pw = (k, label, has) => "<label>" + esc(t(label)) + '<input type="password" name="' + k + '" autocomplete="new-password"' +
     (has ? ' placeholder="' + esc(t("unchanged")) + '"' : "") + "></label>";
@@ -273,6 +273,7 @@ async function swForm(s, typed, err) {
     '<div class="cols2">' + inp("dns_targets", "Hosts targets (user@host[:port], comma separated)", (v.dns_targets || []).join(", "), ' placeholder="root@192.168.88.2"') +
       inp("dns_servers", "Of these DHCP servers only (comma separated, empty = all)", (v.dns_servers || []).join(", ")) + "</div>" +
     inp("ignore", "Health entries to ignore (comma separated, e.g. psu2-state)", (v.ignore || []).join(", ")) +
+    '<label class="check"><input type="checkbox" name="infra_nat"' + (v.infra_nat ? " checked" : "") + "> " + esc(t("Allow the router/bridge switch and its NAT on the Infrastructure page (prototype, direct mode)")) + "</label>" +
     '<p class="sub">' + esc(t("Saving first reads the switch's certificate: you compare its fingerprint, then the accounts are tested.")) + "</p>",
     t("Save"));
   if (!fd) return;
@@ -281,6 +282,7 @@ async function swForm(s, typed, err) {
     write_user: g("write_user"), write_password: String(fd.get("write_password") || ""), ignore: g("ignore").split(/[\s,;]+/).filter(Boolean),
     git_url: g("git_url"), git_branch: g("git_branch") || "main", git_path: g("git_path"), git_fw_path: g("git_fw_path"), git_dns_path: g("git_dns_path"),
     dns: g("dns") || "none", dns_targets: g("dns_targets").split(/[\s,;]+/).filter(Boolean), dns_servers: g("dns_servers").split(/[\s,;]+/).filter(Boolean),
+    infra_nat: fd.get("infra_nat") === "on",
     sha256: s && s.host === g("host") && s.port === (+g("port") || 8729) ? s.sha256 : "" };
   const again = msg => swForm(s, sw, msg);
   const orig = s ? s.name : "";
@@ -314,16 +316,23 @@ async function swDelete(s) {
 }
 
 // RouterOS script that prepares a switch for Cairn Net (pasted in its terminal).
-function prepScript(ip) {
+function prepScript(ip, full) {
   const a = ip || "CAIRN-NET-ADDRESS";
+  const write = full ? [
+    "# Direct mode, FULL rights (every action, RouterOS updates included): the built-in group full.",
+    "# Whoever controls Cairn Net controls the switch, accounts included. Keep another admin way in (SSH, MAC-WinBox).",
+    "/user add name=cairn-write group=full address=" + a + "/32 password=\"CHANGE-ME-WRITE\"",
+  ] : [
+    "# Direct mode only (Cairn Net writes): no policy, password or sensitive rights; reboot for the Restart button",
+    "/user group add name=cairn-write policy=read,write,api,reboot",
+    "/user add name=cairn-write group=cairn-write address=" + a + "/32 password=\"CHANGE-ME-WRITE\"",
+  ];
   return [
     "# Cairn Net: read account, optional write account, API over TLS only",
     "# Replace both passwords. Paste in the switch terminal (WebFig > Terminal or ssh).",
     "/user group add name=cairn-read policy=read,api",
     "/user add name=cairn-read group=cairn-read address=" + a + "/32 password=\"CHANGE-ME-READ\"",
-    "# Direct mode only (Cairn Net writes): no policy, password, reboot or sensitive rights",
-    "/user group add name=cairn-write policy=read,write,api",
-    "/user add name=cairn-write group=cairn-write address=" + a + "/32 password=\"CHANGE-ME-WRITE\"",
+    ...write,
     "# Self-signed certificate for api-ssl (ten years)",
     "/certificate add name=cairn-api common-name=cairn-api days-valid=3650 key-size=2048 key-usage=key-cert-sign,digital-signature,key-encipherment,tls-server",
     "/certificate sign cairn-api",
@@ -336,7 +345,7 @@ function prepScript(ip) {
 }
 function renderPrep() {
   const ip = $("prep-ip").value.trim();
-  $("prep-script").textContent = prepScript(/^[0-9.]+$/.test(ip) ? ip : "");
+  $("prep-script").textContent = prepScript(/^[0-9.]+$/.test(ip) ? ip : "", $("prep-rights").value === "full");
 }
 
 /* ---------- loops ---------- */
@@ -373,6 +382,9 @@ async function slowTick() {
     if (CFG.dhcp) D = await get("/api/dhcp?switch=" + encodeURIComponent(CFG.dhcp.switch));
     if (VIEW === "infra") loadInfra();
     if (VIEW === "firewall") loadFw();
+    if (VIEW === "system") loadSys();
+    if (VIEW === "ip") loadIp();
+    if (VIEW === "ifaces" && !IF_UNTIL) loadIfaces();
     readOk(); render(true);
   } catch (e) { banner(t("Read failed: {err}", { err: e.message }), "read"); }
 }
@@ -387,11 +399,16 @@ function show(view) {
   document.querySelectorAll("#nav button").forEach(b => b.setAttribute("aria-current", b.dataset.view === view ? "page" : "false"));
   $("view-title").textContent = t(VIEWS[view]);
   VIEW = view;
-  const hash = view + (["ports", "infra", "firewall"].includes(view) && SW ? "/" + encodeURIComponent(SW) : "");
+  const hash = view + (["ports", "ifaces", "infra", "firewall", "system", "ip", "tools", "chip", "term"].includes(view) && SW ? "/" + encodeURIComponent(SW) : "");
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash);
   if (view === "settings") loadSettings().catch(e => banner(e.message));
   if (view === "infra" && (!INF || INF.name !== SW)) { INF = null; loadInfra(); }
   if (view === "firewall" && (!FW || FW.name !== SW)) { FW = null; FWE = null; loadFw(); }
+  if (view === "system" && (!SYS || SYS.name !== SW)) { SYS = null; loadSys(); }
+  if (view === "ip" && (!IPV || IPV.name !== SW)) { IPV = null; IPE = null; loadIp(); }
+  if (view === "ifaces" && (!IF || IF.name !== SW)) { IF = null; loadIfaces(); }
+  if (view === "tools" && (!TL || TL.name !== SW)) { TL = null; loadTools(); }
+  if (view === "chip" && window.chipShow) chipShow(); // chip.js may load after the config answer
   render(true);
   animUntil = Date.now() + ENTER_MS;
   clearTimeout(show.timer);
@@ -413,6 +430,12 @@ function render(force = false) {
   if (VIEW === "dhcp") renderDhcp();
   if (VIEW === "infra") renderInfra();
   if (VIEW === "firewall") renderFw();
+  if (VIEW === "system") renderSys();
+  if (VIEW === "ip") renderIp();
+  if (VIEW === "ifaces") renderIfaces();
+  if (VIEW === "tools") renderTools();
+  if (VIEW === "chip" && window.renderChip) renderChip();
+  if (VIEW === "term") renderTerm();
   paint();
 }
 
@@ -528,11 +551,14 @@ function frontPanel(sw, mini = false) {
 function linkCell(sw, p, devs) {
   if (p.neighbor) {
     const remote = String(p.neighbor["interface-name"] || "").split("/").pop();
-    return esc(p.neighbor.identity + (remote ? " · " + short(remote) : ""));
+    const txt = esc((p.neighbor.identity || p.neighbor["mac-address"] || "?") + (remote ? " · " + short(remote) : ""));
+    if (CFG.switches.some(s => s.name === p.neighbor.identity))
+      return '<button class="chip" data-goto="ports/' + esc(p.neighbor.identity) + '" data-sel="' + esc(remote) + '">' + txt + "</button>";
+    return '<button class="chip" data-goto="clients" data-q="' + esc(p.neighbor["mac-address"] || p.neighbor.identity) + '">' + txt + "</button>";
   }
   const here = devs.filter(d => d.sw === sw.name && d.port === (p.bond || p.name));
   if (!here.length) return "";
-  if (here.length === 1) return esc(here[0].name || here[0].ip || here[0].mac);
+  if (here.length === 1) return '<button class="chip" data-goto="clients" data-q="' + esc(here[0].mac) + '">' + esc(here[0].name || here[0].ip || here[0].mac) + "</button>";
   return '<button class="chip" data-goto="clients" data-q="' + esc(sw.name + " " + (p.bond || p.name)) + '">' + tp(here.length, "{n} device", "{n} devices") + "</button>";
 }
 
@@ -576,6 +602,7 @@ function renderPorts(sws) {
         '</td><td class="num rx">' + (p.running ? bits(p.rx) : "") + '</td><td class="num tx">' + (p.running ? bits(p.tx) : "") +
         '</td><td class="num">' + p.linkDowns + "</td></tr>";
     }).join("") + "</tbody>";
+  renderSfp(sw);
 }
 
 /* devices */
@@ -708,6 +735,21 @@ const PROBLEMS = [
   [/^(\S+) overlaps (\S+), already on the switch$/, "{v} overlaps {net}, already on the switch", 1],
   [/^(\S+) is dynamic \(DHCP client\): it cannot be edited$/, "{v} is dynamic (DHCP client): it cannot be edited", 1],
   [/^(\S+) is not in direct mode: nothing is written to it$/, "{who} is not in direct mode: nothing is written to it"],
+  [/^(\S+) carries Cairn Net's path to the switch: it is not switched from here$/, "{v} carries Cairn Net's path to the switch: it is not switched from here", 1],
+  [/^(\S+) is a port of (\S+), not of \S+$/, "{v} is a port of {net}", 1],
+  [/^(\S+) has an IP address: move it first, a bridge port loses it$/, "{v} has an IP address: move it first, a bridge port loses it", 1],
+  [/^Settings reach this switch by name \((\S+)\): .*$/, "Settings reach this switch by name ({v}): Cairn Net cannot follow a new address, change the name's DNS instead", 1],
+  [/^Cairn Net could not reach the switch at (\S+) \((.*)\): Settings unchanged.*$/, "Cairn Net could not reach the switch at {v} ({net}): Settings unchanged, the switch takes its old address back", 1],
+  [/^the switch now answers at (\S+), but Settings could not be saved \((.*)\).*$/, "the switch now answers at {v}, but Settings could not be saved ({net}): set this address in Settings", 1],
+  [/^nothing to install \((.*)\)$/, "nothing to install ({v})", 1],
+  [/^update refused by the switch: (.*) \(RouterOS only lets .*$/, "update refused by the switch: {v} (RouterOS only lets an account with the policy right update: give the write account full rights (Settings, preparation script))", 1],
+  [/^restart refused by the switch: (.*) \(the write account's group needs the reboot policy\)$/, "restart refused by the switch: {v} (the write account's group needs the reboot policy)", 1],
+  [/^(\S+): Cairn Net \((\S+)\) is on this network, the switch answers it through here$/, "{v}: Cairn Net ({net}) is on this network, the switch answers it through here", 1],
+  [/^api-ssl: Cairn Net reaches the switch through it, it stays on$/, "api-ssl: Cairn Net reaches the switch through it, it stays on"],
+  [/^api-ssl: (\S*) leaves out Cairn Net \((\S+)\)$/, "api-ssl: {v} leaves out Cairn Net ({net})", 1],
+  [/^(\S+): invalid address \(a\.b\.c\.d or a\.b\.c\.d\/len\)$/, "{v}: invalid address (a.b.c.d or a.b.c.d/len)", 1],
+  [/^(\S+): no such interface list$/, "{v}: no such interface list", 1],
+  [/^keep a way in besides Cairn Net: SSH, WinBox or MAC-WinBox$/, "keep a way in besides Cairn Net: SSH, WinBox or MAC-WinBox"],
   // src/firewall.rs
   [/^(.*) could cut Cairn Net off the switch \((.*), (\S+)\): refused$/, "{who} could cut Cairn Net off the switch ({v}, {net}): refused"],
   [/^every row needs (\S+)$/, "every row needs {who}"],
@@ -1074,8 +1116,13 @@ async function loadInfra() {
   if (!name) return;
   try { const v = await get("/api/infra?switch=" + encodeURIComponent(name)); if (name === SW) INF = v; }
   catch (e) { if (name === SW) INF = { name, error: e.message }; }
+  const rb = INF && INF.reboot;
+  if (rb && rb.back) banner(t("{name} is back: RouterOS {v}", { name, v: rb.version || "?" }) + (rb.from && rb.version !== rb.from ? " (" + t("was {v}", { v: rb.from }) + ")" : "") +
+    (rb.to && rb.version !== rb.to ? " · " + t("expected {v}: the update did not install", { v: rb.to }) : ""), rb.to && rb.version !== rb.to ? "" : "ok");
+  else if (rb && rb.late) banner(t("{name} has not answered for 15 minutes since its restart", { name }));
   if (VIEW === "infra") render(true);
 }
+const restarting = v => v && v.reboot && !v.reboot.back && !v.reboot.late;
 
 const defaultRoutes = v => (v.routes || []).filter(r => r["dst-address"] === "0.0.0.0/0" && !yes(r.dynamic) && (!r["routing-table"] || r["routing-table"] === "main"));
 const dnsOf = v => list((v.dns || {}).servers);
@@ -1083,6 +1130,15 @@ const vlanOf = (v, iface) => (v.vlan_ifaces || []).find(x => x.name === iface);
 
 function infraPending() {
   const box = $("infra-pending"), v = INF;
+  if (restarting(v)) {
+    const rb = v.reboot;
+    box.hidden = false;
+    box.innerHTML = '<div class="card-head"><h3>' + esc(t(rb.action === "upgrade" ? "Updating {name}" : "Restarting {name}", { name: v.name })) + '</h3><span class="pill warn">' +
+      esc((rb.elapsed || 0) < 120 ? t("{n} s", { n: rb.elapsed || 0 }) : duration(rb.elapsed)) + "</span></div>" + '<p class="sub">' +
+      esc(v.down ? t("Waiting for the switch to answer again ({err}).", { err: v.down }) : t("The switch has not gone down yet.")) +
+      (rb.to ? " " + esc(t("RouterOS {from} → {to}: the new version is read back once it answers.", { from: rb.from, to: rb.to })) : "") + "</p>";
+    return;
+  }
   const left = Math.max(0, Math.ceil((INF_UNTIL - Date.now()) / 1000));
   const waiting = v && !v.error && (left > 0 || v.rollback);
   box.hidden = !waiting;
@@ -1097,13 +1153,25 @@ function renderInfra() {
   $("infra-tabs").innerHTML = CFG.switches.map(s => '<button class="chip' + (s.name === SW ? " on" : "") + '" data-goto="infra/' + esc(s.name) + '">' + esc(s.name) + "</button>").join("");
   const v = INF && INF.name === SW ? INF : null;
   infraPending();
+  if (v && v.down) {
+    $("infra-cards").innerHTML = "";
+    for (const id of ["infra-addr", "infra-br", "infra-nat"]) $(id).innerHTML = "";
+    return;
+  }
   if (!v || v.error) {
     $("infra-cards").innerHTML = '<p class="verdict ' + (v ? "bad" : "") + '">' + (v ? '<span class="dot bad"></span>' + esc(t("{name} unreachable: {err}", { name: SW, err: v.error })) : esc(t("Loading…"))) + "</p>";
     for (const id of ["infra-addr", "infra-br", "infra-nat"]) $(id).innerHTML = "";
     return;
   }
   const r = v.resource || {}, rb = v.routerboard || {}, up = v.update || {}, dns = v.dns || {};
-  const edit = v.mode === "direct" ? '<button data-act="infra-edit">' + esc(t("Edit")) + "</button>" : '<span class="pill">' + esc(t(MODE_LABEL[v.mode] || v.mode)) + "</span>";
+  const busy = restarting(v) ? " disabled" : "";
+  // the write account's rights, when the switch says them: buttons it may not use are off
+  const pol = v.write_policy, may = p => !pol || pol.includes(p);
+  const off = p => may(p) ? busy : ' disabled title="' + esc(t("The write account's group lacks the {p} right (Settings, preparation script)", { p })) + '"';
+  const edit = v.mode === "direct" ? '<div class="toolbar"><button data-act="infra-edit"' + busy + ">" + esc(t("Edit")) + '</button><button data-act="infra-reboot"' + off("reboot") + ">" + esc(t("Restart…")) +
+    '</button><button data-act="infra-upgrade"' + off("policy") + ">" + esc(t("Update…")) + "</button></div>" : '<span class="pill">' + esc(t(MODE_LABEL[v.mode] || v.mode)) + "</span>";
+  const rights = !pol ? [] : [[t("Write account"), pol.includes("policy") ? t("full rights ({g})", { g: v.write_group }) : t("limited rights ({g}: {p})", { g: v.write_group, p: pol.join(", ") })]];
+  const modeBtn = v.mode === "direct" && v.infra_nat ? '<button data-act="infra-mode">' + esc(t("Router / bridge…")) + "</button>" : "";
   // the switch's own check if it ran one, else what MikroTik publishes for its channel
   const latest = up["latest-version"] || v.newest, inst = up["installed-version"] || r.version;
   const upd = latest && latest !== inst ? [t("{v} available", { v: latest }), "warn"] : latest ? [t("up to date"), "ok"] : [t("not checked"), ""];
@@ -1114,14 +1182,20 @@ function renderInfra() {
   $("infra-cards").innerHTML =
     '<article class="card srv"><div class="card-head"><h3>' + esc(t("System")) + "</h3>" + edit + "</div>" + kv([
       [t("Identity"), v.identity || "—"], [t("Model"), rb.model || r["board-name"] || "—"], [t("Architecture"), r["architecture-name"] || "—"],
-      [t("RouterOS"), (inst || "—") + (up.channel ? " (" + up.channel + ")" : "")], [t("Update"), upd[0], upd[1]], [t("Firmware"), fw], [t("Up for"), duration(rosSeconds(r.uptime))],
+      [t("RouterOS"), (inst || "—") + (up.channel ? " (" + up.channel + ")" : "")], [t("Update"), upd[0], upd[1]], [t("Firmware"), fw], [t("Up for"), duration(rosSeconds(r.uptime))], ...rights,
     ]) + "</article>" +
-    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Routing and DNS")) + "</h3></div>" + kv([
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Routing and DNS")) + "</h3>" + modeBtn + "</div>" + kv([
       ...(gws.length ? gws.map(g => [t("Gateway"), g.gateway + (yes(g.active) ? "" : " · " + t("inactive")), yes(g.active) ? "" : "warn"]) : [[t("Gateway"), t("none")]]),
       ...dynGw.map(g => [t("Gateway (DHCP client)"), g.gateway]),
       [t("DNS servers"), dnsOf(v).join(", ") || "—"], ...(dns["dynamic-servers"] ? [[t("DNS from DHCP"), list(dns["dynamic-servers"]).join(", ")]] : []),
       [t("Answers DNS for the network"), yes(dns["allow-remote-requests"]) ? t("yes") : t("no")],
       [t("NAT"), nat.length ? tp(nat.length, "{n} rule", "{n} rules") : t("none")],
+    ]) + "</article>" +
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Admin access")) + "</h3>" +
+      (v.mode === "direct" ? '<button data-act="infra-svc"' + busy + ">" + esc(t("Edit")) + "</button>" : "") + "</div>" + kv([
+      ...(v.services || []).map(x => [x.name + " (" + x.port + ")", yes(x.disabled) ? t("off") : svcFrom(x) ? t("only {v}", { v: svcFrom(x) }) : t("open to everyone"),
+        yes(x.disabled) ? "" : svcFrom(x) ? "ok" : x.name === "api-ssl" || x.name === "ssh" ? "" : "warn"]),
+      [t("MAC-WinBox"), macWinbox(v) || "—", macWinbox(v) === "all" ? "warn" : ""],
     ]) + "</article>";
 
   const addrs = (v.addresses || []).slice().sort((a, b) => natural(a.interface, b.interface));
@@ -1486,16 +1560,18 @@ const maskText = l => { const m = 2 ** 32 - 2 ** (32 - l); return [24, 16, 8, 0]
 
 async function infraForm() {
   const v = INF, gw = (defaultRoutes(v)[0] || {}).gateway || "";
-  const addrs = (v.addresses || []).filter(a => !yes(a.dynamic) && a.interface !== v.mgmt_iface);
+  const own = a => a[".id"] === v.mgmt_address;
+  const addrs = (v.addresses || []).filter(a => !yes(a.dynamic) && (a.interface !== v.mgmt_iface || (own(a) && v.host_is_ip)));
   const fd = await ask(t("Edit {name}", { name: v.name }),
     "<label>" + esc(t("Identity")) + '<input name="identity" required maxlength="64" value="' + esc(v.identity || "") + '"></label>' +
     "<label>" + esc(t("DNS servers, one per line")) + '<textarea name="dns" rows="3">' + esc(dnsOf(v).join("\n")) + "</textarea></label>" +
     "<label>" + esc(t("Address to change")) + '<select name="addr"><option value="">' + esc(t("none")) + "</option>" +
-      addrs.map(a => '<option value="' + esc(a[".id"]) + '">' + esc(a.interface + " · " + a.address) + "</option>").join("") + "</select></label>" +
+      addrs.map(a => '<option value="' + esc(a[".id"]) + '">' + esc(a.interface + " · " + a.address + (own(a) ? " · " + t("Cairn Net's address: the app follows it") : "")) + "</option>").join("") + "</select></label>" +
     '<div class="cols2"><label>' + esc(t("New address")) + '<input name="ip" pattern="(\\d{1,3}\\.){3}\\d{1,3}" placeholder="10.0.0.1"></label>' +
     "<label>" + esc(t("Netmask")) + '<select name="len">' + MASKS.map(l => '<option value="' + l + '"' + (l === 24 ? " selected" : "") + ">/" + l + " (" + maskText(l) + ")</option>").join("") + "</select></label></div>" +
     "<label>" + esc(t("Gateway (default route)")) + '<input name="gateway" pattern="(\\d{1,3}\\.){3}\\d{1,3}" value="' + esc(gw) + '"></label>' +
-    '<p class="sub">' + esc(v.mgmt_iface ? t("{iface} is how Cairn Net reaches the switch: it is not offered here.", { iface: v.mgmt_iface }) : "") + " " +
+    '<p class="sub">' + esc(v.mgmt_iface ? t(v.host_is_ip ? "{iface} is how Cairn Net reaches the switch: only its address is offered, and Cairn Net then moves to it by itself." :
+      "{iface} is how Cairn Net reaches the switch: it is not offered here.", { iface: v.mgmt_iface }) : "") + " " +
       esc(t("Nothing is written yet: the next step shows the commands.")) + "</p>",
     t("Preview"), d => {
       // picking an address fills its current value
@@ -1517,20 +1593,88 @@ async function infraForm() {
   if (g("addr") && g("ip")) want.address = { id: g("addr"), address: g("ip") + "/" + g("len") };
   if (g("gateway") && g("gateway") !== gw) want.gateway = g("gateway");
   if (!Object.keys(want).length) return banner(t("Nothing to change."), "ok");
+  return infraSend(v, want);
+}
+
+async function infraSend(v, want) {
   let p;
   try { p = await post("/api/infra/preview", { switch: v.name, want }); } catch (e) { p = { ok: false, error: e.message }; }
   if (!p.ok) return banner(t("Refused: {err}", { err: problemText(p.error || "") }));
   if (!p.commands.length) return banner(t("Nothing to change."), "ok");
   banner("");
   if (!(await ask(t("Apply on {name}?", { name: v.name }),
+    (p.moves ? '<p class="banner">' + esc(t("Cairn Net reaches the switch at this address. After the change it reaches it at {ip}, reads it back and keeps the change by itself, then saves {ip} in Settings. If it cannot reach it, the switch takes its old address back after {n} s.", { ip: p.moves, n: p.rollback_s })) + "</p>" : "") +
     "<h3>" + esc(t("Commands")) + '</h3><pre class="diff">' + esc(p.commands.join("\n")) + "</pre>" +
     "<h3>" + esc(t("Rollback, run by the switch after {n} s unless you keep the change", { n: p.rollback_s })) + '</h3><pre class="diff">' + esc(p.rollback.join("\n")) + "</pre>",
     t("Apply")))) return;
+  if (p.moves) banner(t("Moving {name} to {ip}…", { name: v.name, ip: p.moves }), "ok");
   let r;
   try { r = await post("/api/infra/apply", { switch: v.name, want }); } catch (e) { r = { ok: false, error: e.message }; }
-  if (r.verified) { INF_UNTIL = Date.now() + r.rollback_s * 1000; banner(""); }
-  else banner(r.pending ? t("{done} of {n} commands run on {name}", { done: r.done, n: r.commands.length, name: v.name }) + (r.error ? " · " + problemText(r.error) : "") +
-    " · " + t("the switch puts the old settings back within {n} s", { n: r.rollback_s }) : t("Refused: {err}", { err: problemText(r.error || "") }));
+  if (r.moved) { banner(t("{name} now answers at {ip}: kept, and Settings updated.", { name: v.name, ip: r.moved }), "ok"); CFG = await get("/api/config"); }
+  else if (r.verified) { INF_UNTIL = Date.now() + r.rollback_s * 1000; banner(""); }
+  else {
+    if (r.pending) INF_UNTIL = Date.now() + (r.left_s != null ? r.left_s : r.rollback_s) * 1000;
+    banner(r.pending ? t("{done} of {n} commands run on {name}", { done: r.done, n: r.commands.length, name: v.name }) + (r.error ? " · " + problemText(r.error) : "") +
+      " · " + t("the switch puts the old settings back within {n} s", { n: r.rollback_s }) : t("Refused: {err}", { err: problemText(r.error || "") }));
+  }
+  await loadInfra();
+}
+
+const svcFrom = x => x["available-from"] != null ? x["available-from"] : x.address || "";
+const macWinbox = v => (v.mac_winbox || {})["allowed-interface-list"];
+
+// Admin services (/ip service) and MAC-WinBox: on/off, allowed addresses.
+async function infraServices() {
+  const v = INF, svcs = v.services || [], mac = macWinbox(v) || "";
+  const lists = ["all", "none", ...(v.iface_lists || []).map(l => l.name).filter(n => n !== "all" && n !== "none")];
+  const fd = await ask(t("Admin access on {name}", { name: v.name }),
+    svcs.map(x => '<div class="cols2"><label class="check"><input type="checkbox" name="on-' + esc(x[".id"]) + '"' + (yes(x.disabled) ? "" : " checked") + (x.name === "api-ssl" ? " disabled" : "") + "> " +
+      esc(x.name + " (" + x.port + ")") + "</label><label>" + esc(t("Allowed from (empty: everyone)")) + '<input name="from-' + esc(x[".id"]) + '" value="' + esc(svcFrom(x)) + '" placeholder="192.168.1.0/24, 192.168.1.10"></label></div>').join("") +
+    "<label>" + esc(t("MAC-WinBox (interface list)")) + '<select name="mac">' + lists.map(n => '<option' + (n === mac ? " selected" : "") + ">" + esc(n) + "</option>").join("") + "</select></label>" +
+    '<p class="sub">' + esc(t("api-ssl carries Cairn Net: it stays on and open to Cairn Net's address. One way in besides Cairn Net must stay: SSH, WinBox or MAC-WinBox.")) + "</p>",
+    t("Preview"));
+  if (!fd) return;
+  const services = svcs.map(x => ({ id: x[".id"], disabled: x.name !== "api-ssl" && fd.get("on-" + x[".id"]) !== "on", from: String(fd.get("from-" + x[".id"]) || "").trim() }))
+    .filter((s, i) => s.disabled !== yes(svcs[i].disabled) || s.from.split(/[\s,;]+/).filter(Boolean).join(",") !== svcFrom(svcs[i]));
+  const want = { services };
+  if (fd.get("mac") !== mac) want.mac_winbox = String(fd.get("mac"));
+  if (!services.length && !want.mac_winbox) return banner(t("Nothing to change."), "ok");
+  return infraSend(v, want);
+}
+
+// Router/bridge for one port (prototype, the switch's setting must allow it).
+async function infraMode() {
+  const v = INF, ports = v.ports || [];
+  const ifs = (v.ifaces || []).filter(i => ["ether", "vlan", "bond"].includes(i.type) && i.name !== v.mgmt_iface && (!yes(i.slave) || ports.some(p => p.interface === i.name))).map(i => i.name).sort(natural);
+  if (!ifs.length || !(v.bridges || []).length) return banner(t("No port or no bridge to switch."));
+  const state = n => { const p = ports.find(x => x.interface === n); return p ? t("in {bridge}", { bridge: p.bridge }) : t("outside any bridge"); };
+  const fd = await ask(t("Router or bridge on {name}", { name: v.name }),
+    "<label>" + esc(t("Port")) + '<select name="iface">' + ifs.map(n => '<option value="' + esc(n) + '">' + esc(n + " · " + state(n)) + "</option>").join("") + "</select></label>" +
+    "<label>" + esc(t("Bridge")) + '<select name="bridge">' + v.bridges.map(b => '<option value="' + esc(b.name) + '">' + esc(b.name) + "</option>").join("") + "</select></label>" +
+    "<label>" + esc(t("Mode")) + '<select name="router"><option value="1">' + esc(t("Router: the port leaves the bridge, traffic out of it is masqueraded (NAT)")) + "</option>" +
+      '<option value="0">' + esc(t("Bridge: the port joins the bridge, its masquerade is removed")) + "</option></select></label>" +
+    '<p class="sub">' + esc(t("Prototype. Refused when the port or the bridge carries Cairn Net's path, when a rule could cut it, or while connection tracking is off (the first NAT rule would start it and may cut open connections).")) + "</p>",
+    t("Preview"));
+  if (!fd) return;
+  return infraSend(v, { mode: { iface: String(fd.get("iface")), bridge: String(fd.get("bridge")), router: fd.get("router") === "1" } });
+}
+
+// Restart or update: what will happen, then the switch's name typed.
+async function infraPower(action) {
+  const v = INF, up = v.update || {}, r = v.resource || {};
+  const inst = up["installed-version"] || r.version, latest = up["latest-version"] || v.newest;
+  const upg = action === "upgrade";
+  if (!(await ask(t(upg ? "Update {name}?" : "Restart {name}?", { name: v.name }),
+    "<p>" + esc(upg ? t("The switch checks for a newer RouterOS on its channel ({ch}), downloads it, then restarts to install it. Now: {inst}; published: {latest}.", { ch: up.channel || "stable", inst: inst || "?", latest: latest || "?" }) :
+      t("The switch restarts now.")) + "</p><p>" + esc(t("Everything behind it is cut while it restarts (usually one to three minutes). There is no rollback.")) + "</p>",
+    t("Continue")))) return;
+  const fd = await ask(t("Type {name} to confirm", { name: v.name }),
+    "<label>" + esc(t("Switch name")) + '<input name="confirm" required autocomplete="off" pattern="' + esc(v.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) + '"></label>', t(upg ? "Install the update" : "Restart"));
+  if (!fd) return;
+  let res;
+  banner(t(upg ? "Checking and downloading the update on {name}…" : "Restarting {name}…", { name: v.name }), "ok");
+  try { res = await post("/api/infra/power", { switch: v.name, action, confirm: String(fd.get("confirm") || "") }); } catch (e) { res = { ok: false, error: e.message }; }
+  banner(res.ok ? "" : t("Refused: {err}", { err: problemText(res.error || "") }));
   await loadInfra();
 }
 
@@ -1541,6 +1685,9 @@ async function infraKeep() {
   banner(r.ok ? t("Kept on {name}.", { name: INF.name }) : t("Refused: {err}", { err: problemText(r.error || "") }), r.ok ? "ok" : "");
   await loadInfra();
 }
+
+// While a switch restarts: read it again every 3 s until it answers.
+setInterval(() => { if (VIEW === "infra" && restarting(INF)) loadInfra(); }, 3000);
 
 // The countdown; at zero the switch has rolled back: read it again.
 setInterval(() => {
@@ -1605,9 +1752,14 @@ document.addEventListener("click", e => {
   }
   if (d.act === "dhcp-sw") return pickDhcp(d.name);
   if (FW && !FW.error && String(d.act || "").startsWith("fw-")) return fwAct(d);
+  if (IPV && !IPV.error && String(d.act || "").startsWith("ip-")) return ipAct(d);
   if (INF && !INF.error) switch (d.act) {
     case "infra-edit": return infraForm();
     case "infra-keep": return infraKeep();
+    case "infra-mode": return infraMode();
+    case "infra-svc": return infraServices();
+    case "infra-reboot": return infraPower("reboot");
+    case "infra-upgrade": return infraPower("upgrade");
   }
   if (D) switch (d.act) {
     case "res-new": return resForm();
@@ -1646,6 +1798,7 @@ document.addEventListener("click", e => {
 });
 $("q").addEventListener("input", () => render(true));
 $("prep-ip").addEventListener("input", renderPrep);
+$("prep-rights").addEventListener("change", renderPrep);
 window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 document.addEventListener("pointerdown", () => { animUntil = Math.max(animUntil, Date.now() + 500); });
 
@@ -1667,7 +1820,8 @@ async function signIn() {
 
 $("meta").textContent = t("Loading…");
 setLang(LANG);
-get("/api/config").then(cfg => {
+// after every deferred script (topo.js, ip.js) has run: their views are ready
+new Promise(r => addEventListener("DOMContentLoaded", r, { once: true })).then(() => get("/api/config")).then(cfg => {
   CFG = cfg;
   $("logout").hidden = !CFG.login;
   document.title = CFG.title + " · Cairn Net";

@@ -37,6 +37,8 @@ pub struct SwitchCfg {
     pub dns: String,
     pub dns_targets: Vec<String>,
     pub dns_servers: Vec<String>,
+    // Infrastructure page: router/bridge switch and its NAT (prototype, off unless set)
+    pub infra_nat: bool,
 }
 
 pub fn pin(s: &str) -> String {
@@ -75,6 +77,7 @@ impl SwitchCfg {
             dns: Some(s("dns")).filter(|m| !m.is_empty()).unwrap_or_else(|| "none".into()),
             dns_targets: list(&v["dns_targets"]),
             dns_servers: list(&v["dns_servers"]),
+            infra_nat: v["infra_nat"].as_bool().unwrap_or(false),
         }
     }
 
@@ -83,7 +86,7 @@ impl SwitchCfg {
         let mut v = json!({"name": self.name, "host": self.host, "port": self.port, "sha256": pretty(&self.sha256), "user": self.user,
             "write_user": self.write_user, "mode": self.mode, "ignore": self.ignore, "url": self.url,
             "git_url": self.git_url, "git_branch": self.git_branch, "git_path": self.git_path, "git_fw_path": self.git_fw_path, "git_dns_path": self.git_dns_path,
-            "dns": self.dns, "dns_targets": self.dns_targets, "dns_servers": self.dns_servers});
+            "dns": self.dns, "dns_targets": self.dns_targets, "dns_servers": self.dns_servers, "infra_nat": self.infra_nat});
         if secrets {
             v["password"] = json!(self.password);
             v["write_password"] = json!(self.write_password);
@@ -218,6 +221,16 @@ pub fn save(new: Vec<SwitchCfg>) -> Result<(), String> {
     write(&st.path, &new)?;
     *g = new.into_iter().map(|cfg| g.iter().find(|o| o.cfg == cfg).cloned().unwrap_or_else(|| Arc::new(Switch { cfg, conn: Mutex::new(None) }))).collect();
     Ok(())
+}
+
+/// The switch answers at a new address (Infrastructure page): the app follows.
+pub fn set_host(name: &str, host: &str) -> Result<(), String> {
+    save(all().iter().map(|s| s.cfg.clone()).map(|mut c| {
+        if c.name == name {
+            c.host = host.to_string();
+        }
+        c
+    }).collect())
 }
 
 /// One edit from the page. `orig`: the name before the edit (none = new).

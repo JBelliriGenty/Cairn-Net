@@ -393,7 +393,7 @@ dialog { width: min(560px, calc(100vw - 32px)); }
 .port.off { border-style: dashed; color: var(--muted); opacity: .6; }
 .port.uplink { box-shadow: inset 0 -3px 0 var(--accent); }
 .port.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
-.front.mini { padding: 0; margin: 6px 0 0; gap: 6px; background: none; }
+.front.mini { padding: 0; margin: 6px 0 0; gap: 6px; background: none; border-radius: 0; }
 .front.mini .pgroup, .front.mini .prow { gap: 2px; }
 .front.mini .port { width: 11px; height: 9px; border-radius: 2px; }
 .front.mini .pgroup .port { width: 11px; }
@@ -513,3 +513,36 @@ fieldset.kinds label.swatch { gap: 6px; }
 @keyframes topo-flow { to { stroke-dashoffset: -24; } }
 @media (prefers-reduced-motion: reduce) { #topo .flow { animation: none; stroke-dasharray: none; opacity: .5; } }
 .pill.standby { background: var(--track); color: var(--muted); }
+
+/* System page (www/system.js) */
+.log-filters input[type=search] { width: min(320px, 100%); padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); }
+.log-filters select { padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); }
+.log-filters label.check { display: flex; align-items: center; gap: 6px; }
+table.log td.wrap { white-space: normal; }
+table.log tr.warn td:first-child { box-shadow: inset 3px 0 var(--warn); }
+table.log tr.bad td:first-child { box-shadow: inset 3px 0 var(--bad); }
+table.mini td { padding: 4px 0; font-size: 13px; }
+a.button { display: inline-block; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--control); background: var(--panel); color: inherit; text-decoration: none; }
+a.button:hover { border-color: var(--muted); }
+td.actions a.button + button, td.actions button + a.button { margin-left: 6px; }
+.sys .kv { grid-template-columns: max-content 1fr; }
+table.log td { padding: 5px 12px; font-size: 13px; }
+#sys-content > * + * { margin-top: 14px; }
+/* tools (www/tools.js) */
+.tl-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0 12px; }
+.tl-form label, .tl-addr { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.tl-addr { display: contents; }
+.tl-addr[hidden] { display: none; }
+.tl-form input, .tl-form select { padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); min-width: 0; }
+#tl-main .card, #tl-run { margin-bottom: 14px; }
+pre.tl-cmd { white-space: pre-wrap; word-break: break-all; background: var(--track); padding: 10px 12px; border-radius: 6px; margin: 6px 0 10px; }
+.tl-kv { font-size: 14px; margin-bottom: 10px; }
+/* terminal (www/term.js) */
+.te-out { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.45; white-space: pre; overflow: auto; height: min(60vh, 560px);
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 6px; background: var(--track); }
+.te-out .te-cmd { color: var(--accent); font-weight: 600; }
+.te-out .te-err { color: var(--bad); }
+.te-line { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.te-line label { white-space: nowrap; color: var(--muted); }
+.te-line input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); color: inherit;
+  font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
