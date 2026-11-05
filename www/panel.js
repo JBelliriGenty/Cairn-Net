@@ -8,7 +8,7 @@ const FAST_MS = 3000;   // resources, health, interface counters
 const SLOW_MS = 20000;  // links, VLANs, neighbours, MAC tables, leases
 const HIST = 60;        // sparkline points (3 min at 3 s)
 const ENTER_MS = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 650;
-const VIEWS = { overview: "Overview", ports: "Ports", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", settings: "Settings" };
+const VIEWS = { overview: "Overview", ports: "Ports", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", infra: "Infrastructure", settings: "Settings" };
 
 let CFG = { switches: [] };
 let D = null, CHANGES = [], PREVIEW = null; // /api/dhcp, pending reservation changes, their preview
@@ -231,6 +231,7 @@ function devices(sws) {
 
 let SET = null; // /api/settings
 const MODE_LABEL = { read: "Read only", direct: "Direct", git: "Git" };
+const DNS_LABEL = { none: "No", hosts: "Hosts file over SSH (Pi-hole, dnsmasq)", routeros: "Static DNS of this switch (write account)" };
 const MODE_HELP = {
   read: "Cairn Net only reads this switch.",
   direct: "Cairn Net writes to the switch through its API, after showing the difference.",
@@ -260,6 +261,7 @@ function renderSettings() {
   }).join("") || '<p class="sub">' + esc(t("No switch yet: add the first one.")) + "</p>";
   renderPrep();
   $("git-key").textContent = SET.git_key || t("No key: ssh-keygen is missing in the image.");
+  $("dns-line").textContent = 'command="/usr/local/bin/cairn-net-hosts /etc/pihole/hosts/cairn-net.list /etc/pihole/hosts/custom.list",restrict ' + (SET.git_key || "ssh-ed25519 …");
 }
 
 // Settings changed: the rest of the page reads the new switch list.
@@ -273,7 +275,7 @@ async function settingsSaved(res) {
 }
 
 async function swForm(s, typed, err) {
-  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "" }, s || {}, typed || {});
+  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "", dns: "none", dns_targets: [], dns_servers: [] }, s || {}, typed || {});
   const inp = (k, label, val, more = "") => "<label>" + esc(t(label)) + '<input name="' + k + '" value="' + esc(val) + '"' + more + "></label>";
   const pw = (k, label, has) => "<label>" + esc(t(label)) + '<input type="password" name="' + k + '" autocomplete="new-password"' +
     (has ? ' placeholder="' + esc(t("unchanged")) + '"' : "") + "></label>";
@@ -289,6 +291,10 @@ async function swForm(s, typed, err) {
       inp("write_user", "Write account (direct mode)", v.write_user) + pw("write_password", "Its password", s && s.has_write_password) + "</div>" +
     '<div class="cols2">' + inp("git_url", "Repository (git mode)", v.git_url, ' placeholder="ssh://git@git.example.com/network.git"') +
       inp("git_path", "DHCP file in it", v.git_path, ' placeholder="network/dhcp.yml"') + inp("git_branch", "Branch", v.git_branch) + "</div>" +
+    "<label>" + esc(t("Publish the names of the leases (DNS)")) + '<select name="dns">' + Object.keys(DNS_LABEL).map(k => '<option value="' + k + '"' +
+      (k === v.dns ? " selected" : "") + ">" + esc(t(DNS_LABEL[k])) + "</option>").join("") + "</select></label>" +
+    '<div class="cols2">' + inp("dns_targets", "Hosts targets (user@host[:port], comma separated)", (v.dns_targets || []).join(", "), ' placeholder="root@192.168.88.2"') +
+      inp("dns_servers", "Of these DHCP servers only (comma separated, empty = all)", (v.dns_servers || []).join(", ")) + "</div>" +
     inp("ignore", "Health entries to ignore (comma separated, e.g. psu2-state)", (v.ignore || []).join(", ")) +
     '<p class="sub">' + esc(t("Saving first reads the switch's certificate: you compare its fingerprint, then the accounts are tested.")) + "</p>",
     t("Save"));
@@ -297,6 +303,7 @@ async function swForm(s, typed, err) {
   const sw = { name: g("name"), host: g("host"), port: +g("port") || 8729, url: g("url"), mode: g("mode"), user: g("user"), password: String(fd.get("password") || ""),
     write_user: g("write_user"), write_password: String(fd.get("write_password") || ""), ignore: g("ignore").split(/[\s,;]+/).filter(Boolean),
     git_url: g("git_url"), git_branch: g("git_branch") || "main", git_path: g("git_path"),
+    dns: g("dns") || "none", dns_targets: g("dns_targets").split(/[\s,;]+/).filter(Boolean), dns_servers: g("dns_servers").split(/[\s,;]+/).filter(Boolean),
     sha256: s && s.host === g("host") && s.port === (+g("port") || 8729) ? s.sha256 : "" };
   const again = msg => swForm(s, sw, msg);
   const orig = s ? s.name : "";
@@ -387,6 +394,7 @@ async function slowTick() {
   try {
     S = await get("/api/slow");
     if (CFG.dhcp) D = await get("/api/dhcp?switch=" + encodeURIComponent(CFG.dhcp.switch));
+    if (VIEW === "infra") loadInfra();
     readOk(); render(true);
   } catch (e) { banner(t("Read failed: {err}", { err: e.message }), "read"); }
 }
@@ -401,9 +409,10 @@ function show(view) {
   document.querySelectorAll("#nav button").forEach(b => b.setAttribute("aria-current", b.dataset.view === view ? "page" : "false"));
   $("view-title").textContent = t(VIEWS[view]);
   VIEW = view;
-  const hash = view + (view === "ports" && SW ? "/" + encodeURIComponent(SW) : "");
+  const hash = view + ((view === "ports" || view === "infra") && SW ? "/" + encodeURIComponent(SW) : "");
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash);
   if (view === "settings") loadSettings().catch(e => banner(e.message));
+  if (view === "infra" && (!INF || INF.name !== SW)) { INF = null; loadInfra(); }
   render(true);
   animUntil = Date.now() + ENTER_MS;
   clearTimeout(show.timer);
@@ -422,6 +431,7 @@ function render(force = false) {
   if (VIEW === "clients") renderClients(sws);
   if (VIEW === "vlans") renderVlans(sws);
   if (VIEW === "dhcp") renderDhcp();
+  if (VIEW === "infra") renderInfra();
   paint();
 }
 
@@ -700,9 +710,17 @@ const PROBLEMS = [
   [/^(.*): same (MAC|IP|name) as (.*)$/, "{who}: same {v} as {net}"],
   [/^(\S+) is already reserved$/, "{who} is already reserved"], [/^(\S+) is not reserved$/, "{who} is not reserved"],
   [/^(\S+) is already a server$/, "{who} is already a server"], [/^(\S+) is not a server$/, "{who} is not a server"],
+  // src/infra.rs
+  [/^(\S+) would take the network of the management path \((\S+)\)$/, "{v} would take the network of the management path ({net})", 1],
+  [/^(\S+) overlaps (\S+), already on the switch$/, "{v} overlaps {net}, already on the switch", 1],
+  [/^(\S+) is dynamic \(DHCP client\): it cannot be edited$/, "{v} is dynamic (DHCP client): it cannot be edited", 1],
+  [/^(\S+) is not in direct mode: nothing is written to it$/, "{who} is not in direct mode: nothing is written to it"],
 ];
 function problemText(p) {
-  for (const [re, k] of PROBLEMS) { const m = p.match(re); if (m) return t(k, { who: m[1], v: t(m[2] || ""), net: m[3] }); }
+  for (const [re, k, raw] of PROBLEMS) {
+    const m = p.match(re);
+    if (m) return raw ? t(k, { v: m[1], net: m[2] }) : t(k, { who: m[1], v: t(m[2] || ""), net: m[3] });
+  }
   const m = p.match(/^([^:\s]+): (.*)$/); // "<server>: <problem>" (src/servers.rs)
   return m ? t("{who}: " + m[2], { who: m[1] }) : t(p);
 }
@@ -732,11 +750,24 @@ function liveServer(s, srv) {
   const pool = (s.pools || []).find(p => p.name === srv["address-pool"]);
   const opts = list(net["dhcp-option"]).map(name => (s.dhcp_options || []).find(x => x.name === name) || { name });
   const r121 = opts.find(o => o.code === "121");
-  return { opts, v: { enabled: !yes(srv.disabled), interface: srv.interface, network: net.address || "", range: (pool && pool.ranges) || "",
+  // RouterOS rogue DHCP alert on the interface: what it saw (MACs, kept for its alert-timeout)
+  const al = (s.dhcp_alerts || []).find(a => a.interface === srv.interface && !yes(a.disabled));
+  const unknown = al ? list(al["unknown-server"]).map(m => m.toUpperCase()) : [];
+  return { opts, unknown, v: { enabled: !yes(srv.disabled), interface: srv.interface, network: net.address || "", range: (pool && pool.ranges) || "",
     gateway: net.gateway || "", dns: list(net["dns-server"]), domain: net.domain || "", ntp: list(net["ntp-server"]), lease_time: srv["lease-time"] || "",
-    routes: r121 ? routes121(r121.value).map(r => r.replace(" → ", ",")) : [] } };
+    routes: r121 ? routes121(r121.value).map(r => r.replace(" → ", ",")) : [],
+    options: opts.filter(o => o.code && o.code !== "121").map(o => o.code + "," + o.value),
+    alert: !!al, alert_valid: al ? list(al["valid-server"]).map(m => m.toUpperCase()) : [] } };
 }
-const SRV_FIELDS = ["enabled", "interface", "network", "range", "gateway", "dns", "domain", "ntp", "lease_time", "routes"];
+const SRV_FIELDS = ["enabled", "interface", "network", "range", "gateway", "dns", "domain", "ntp", "lease_time", "routes", "options", "alert", "alert_valid"];
+// One option line "code value" -> "code,value" in RouterOS syntax: a bare
+// value becomes text (s'…'), an address '…' (4 bytes), 0x… and numbers stay.
+function optionValue(line) {
+  const m = line.trim().match(/^(\d+)[\s,]+(.*)$/);
+  if (!m) return line.trim();
+  const v = m[2].trim();
+  return m[1] + "," + (/^(0x[0-9a-f]*|\d+|s?'.*')$/i.test(v) ? v : /^(\d{1,3}\.){3}\d{1,3}$/.test(v) ? "'" + v + "'" : "s'" + v + "'");
+}
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // Pie of a pool, used share in the middle. SVG attributes, not inline styles
@@ -771,25 +802,35 @@ function renderServers() {
     const extra = live ? live.opts.filter(o => o.code !== "121").map(o => o.name + (o.code ? " (" + o.code + ") = " + o.value : "")) : [];
     const gives = [v.gateway && t("gateway {gw}", { gw: v.gateway }), v.dns.length && "DNS " + v.dns.join(", "), v.domain && t("domain {d}", { d: v.domain }),
       v.ntp.length && "NTP " + v.ntp.join(", "), v.lease_time && t("lease {d}", { d: v.lease_time })].filter(Boolean)
-      .concat(v.routes.map(x => t("route {r}", { r: x.replace(",", " → ") })), extra);
+      .concat(v.routes.map(x => t("route {r}", { r: x.replace(",", " → ") })), extra,
+        v.alert ? [t("watches for other DHCP servers") + (v.alert_valid.length ? " (" + t("expected: {m}", { m: v.alert_valid.join(", ") }) + ")" : "")] : []);
+    const rogue = live ? live.unknown : [];
     const st = !srv ? ["warn", t("not on the switch")] : yes(srv.invalid) ? ["bad", t("invalid")] : v.enabled ? ["ok", t("on")] : ["warn", t("off")];
     const diff = f && live ? SRV_FIELDS.filter(k => !same(f[k], live.v[k])) : [];
     const lg = (cls, n, label) => '<span class="legend-item"><span class="sw ' + cls + '"></span>' + esc(label) + " <b>" + n + "</b></span>";
     cards.push('<article class="card srv ' + st[0] + '"><div class="card-head"><h3>' + esc(name) + ' <span class="sub">' + esc(CFG.dhcp.switch) + "</span></h3>" +
       '<span class="pill ' + st[0] + '">' + esc(st[1]) + "</span>" +
+      (rogue.length ? '<span class="pill bad">' + esc(t("other DHCP server")) + "</span>" : "") +
       (diff.length ? '<span class="pill warn" title="' + esc(diff.join(", ")) + '">' + esc(t("differs from the file")) + "</span>" : "") + "</div>" +
       '<p class="sub">' + esc([v.interface + (vl ? " · " + t("VLAN {id}", { id: vl["vlan-id"] }) : ""), v.network, v.range].filter(Boolean).join(" · ")) + "</p>" +
       '<div class="pool">' + pie([["leased", leased], ["reserved", resIn]], size, t("{a} leased, {b} reserved, {c} free of {n}", { a: leased, b: resIn, c: free, n: size })) +
       '<div class="legend">' + lg("leased", leased, t("leased")) + lg("reserved", resIn, t("reserved")) + lg("free", free, t("free")) +
       '<span class="legend-item sub">' + esc(t("of {n} in the range", { n: size })) + "</span></div></div>" +
       (resOut ? '<p class="sub">' + esc(tp(resOut, "+ {n} reservation outside the range", "+ {n} reservations outside the range")) + "</p>" : "") +
+      (rogue.length ? '<p class="banner bad-note">' + esc(tp(rogue.length, "Another DHCP server answers on {iface}: {macs}. Two servers on one network hand out conflicting addresses.",
+        "{n} other DHCP servers answer on {iface}: {macs}. Two servers on one network hand out conflicting addresses.", { iface: v.interface, macs: rogue.join(", ") })) + "</p>" : "") +
       '<ul class="gives">' + gives.map(g => "<li>" + esc(g) + "</li>").join("") + "</ul>" +
       (diff.length ? '<p class="sub">' + esc(t("The file asks for another value ({what}): your tool sets it back at its next run.", { what: diff.join(", ") })) + "</p>" : "") +
       '<div class="card-head foot"><span class="sub">' + esc(t("Managed by {who}", { who: direct() ? "Cairn Net" : f ? t("the file") : t("hand (RouterOS)") })) + "</span>" +
       (f ? '<span class="actions"><button data-act="srv-toggle" data-name="' + esc(name) + '">' + esc(f.enabled ? t("Turn off") : t("Turn on")) +
-        '</button><button data-act="srv-edit" data-name="' + esc(name) + '">' + esc(t("Edit")) + "</button></span>" : "") + "</div></article>");
+        '</button><button data-act="srv-edit" data-name="' + esc(name) + '">' + esc(t("Edit")) + "</button>" +
+        (name === CFG.dhcp.server ? "" : '<button class="danger" data-act="srv-del" data-name="' + esc(name) + '">' + esc(t("Delete")) + "</button>") + "</span>" : "") + "</div></article>");
   }
-  $("dhcp-srv").innerHTML = cards.join("") || '<p class="sub">' + t("No DHCP server on the switches.") + "</p>";
+  // an alert on an interface without a server of this switch: shown on its own
+  const own = new Set((r.dhcp_servers || []).map(x => x.interface));
+  const loose = (r.dhcp_alerts || []).filter(a => !own.has(a.interface) && !yes(a.disabled) && list(a["unknown-server"]).length).map(a =>
+    '<p class="banner bad-note">' + esc(t("Another DHCP server answers on {iface}: {macs}.", { iface: a.interface, macs: list(a["unknown-server"]).join(", ") })) + "</p>");
+  $("dhcp-srv").innerHTML = loose.join("") + (cards.join("") || '<p class="sub">' + t("No DHCP server on the switches.") + "</p>");
 }
 
 // The router's interfaces that have an address: where a server can listen.
@@ -802,12 +843,13 @@ function ifaces() {
 }
 const OTHER_DHCP_WARN = "Another DHCP server may already serve this network: turn it off first, never two DHCP servers on one network.";
 async function srvForm(f) {
-  const v = f || { name: "", enabled: true, interface: "", network: "", range: "", gateway: "", dns: [], domain: "", ntp: [], lease_time: "1d", routes: [] };
+  const v = f || { name: "", enabled: true, interface: "", network: "", range: "", gateway: "", dns: [], domain: "", ntp: [], lease_time: "1d", routes: [], options: [], alert: true, alert_valid: [] };
   const ifs = ifaces(), opts = ifs.some(i => i.name === v.interface) || !v.interface ? ifs : ifs.concat([{ name: v.interface, label: v.interface }]);
   const inp = (k, label, val, more = "") => "<label>" + esc(t(label)) + '<input name="' + k + '" value="' + esc(val) + '"' + more + "></label>";
   const lan = f && f.name === CFG.dhcp.server;
   const fd = await ask(f ? t("Edit server {name}", { name: f.name }) : t("New DHCP server"),
-    (f ? "" : inp("name", "Name", "", ' required maxlength="63" pattern="[A-Za-z0-9]([A-Za-z0-9\\-]*[A-Za-z0-9])?"')) +
+    // the server named in the configuration keeps its name
+    inp("name", "Name", v.name, ' required maxlength="63" pattern="[A-Za-z0-9]([A-Za-z0-9\\-]*[A-Za-z0-9])?"' + (lan ? " readonly" : "")) +
     '<label class="check"><input type="checkbox" name="enabled"' + (v.enabled ? " checked" : "") + ">" + esc(t("Server on")) + "</label>" +
     (lan ? '<p class="banner warn-note">' + esc(t(OTHER_DHCP_WARN)) + "</p>" : "") +
     "<label>" + esc(t("Interface")) + '<select name="interface" required>' + (v.interface ? "" : '<option value="">' + esc(t("Choose…")) + "</option>") +
@@ -816,9 +858,15 @@ async function srvForm(f) {
     inp("range", "Range", v.range, ' required placeholder="192.168.30.100-192.168.30.199"') + inp("lease_time", "Lease time", v.lease_time, ' required placeholder="1d, 12h, 30m"') +
     inp("dns", "DNS servers (comma separated)", v.dns.join(", ")) + inp("ntp", "NTP servers (comma separated)", v.ntp.join(", ")) + "</div>" +
     inp("domain", "Domain", v.domain) +
+    '<label class="check"><input type="checkbox" name="alert"' + (v.alert ? " checked" : "") + ">" + esc(t("Watch for other DHCP servers on this interface")) + "</label>" +
+    inp("alert_valid", "Other DHCP servers that are expected (MAC addresses, comma separated)", (v.alert_valid || []).join(", ")) +
+    '<p class="sub">' + esc(t("The switch listens for DHCP answers and sends a discovery once a minute; any other server shows on this card.")) + "</p>" +
     "<label>" + esc(t("Routes (option 121), one per line: network gateway")) + '<textarea name="routes" rows="4" placeholder="0.0.0.0/0 192.168.30.1">' +
     esc(v.routes.map(x => x.replace(",", " ")).join("\n")) + "</textarea></label>" +
     '<p class="sub">' + esc(t("A client that gets routes ignores the gateway: put the default route (0.0.0.0/0) in them.")) + "</p>" +
+    "<label>" + esc(t("Other DHCP options, one per line: code value")) + '<textarea name="options" rows="3" placeholder="66 tftp.example">' +
+    esc((v.options || []).map(x => x.replace(",", " ")).join("\n")) + "</textarea></label>" +
+    '<p class="sub">' + esc(t("e.g. 66 TFTP server, 67 boot file, 150 TFTP address, 252 proxy (WPAD) URL. A plain value is sent as text, an address as 4 bytes; 0x… is raw hex.")) + "</p>" +
     (f ? "" : "<label>" + esc(t("Comment (optional, one line in the file)")) + '<input name="comment" maxlength="200"></label>'),
     f ? t("Edit") : t("Add"), dlg => {
       // picking an interface fills the network and the gateway with its own
@@ -831,13 +879,27 @@ async function srvForm(f) {
     });
   if (!fd) return;
   const g = k => String(fd.get(k) || "").trim(), many = k => g(k).split(/[\s,;]+/).filter(Boolean);
-  const server = { name: f ? f.name : g("name"), enabled: fd.get("enabled") === "on", interface: g("interface"), network: g("network"), range: g("range").replace(/\s+/g, ""),
+  const server = { name: g("name") || (f && f.name), enabled: fd.get("enabled") === "on", interface: g("interface"), network: g("network"), range: g("range").replace(/\s+/g, ""),
     gateway: g("gateway"), dns: many("dns"), domain: g("domain"), ntp: many("ntp"), lease_time: g("lease_time"),
-    routes: g("routes").split("\n").map(l => l.trim().split(/[\s,→>]+/).filter(Boolean)).filter(p => p.length).map(p => p.join(",")) };
+    routes: g("routes").split("\n").map(l => l.trim().split(/[\s,→>]+/).filter(Boolean)).filter(p => p.length).map(p => p.join(",")),
+    options: g("options").split("\n").filter(l => l.trim()).map(optionValue),
+    alert: fd.get("alert") === "on", alert_valid: many("alert_valid").map(m => m.toUpperCase()) };
   return queue(f ? { op: "srv_set", name: f.name, server } : { op: "srv_add", server, comment: g("comment") });
 }
+// The reservations of its network go with it (they would be outside every server).
+async function srvDelete(f) {
+  const res = D.entries.filter(e => f.network && inNet(e.ip, f.network));
+  if (!(await ask(t("Delete server {name}?", { name: f.name }), "<p>" + esc(t("Its network, pool and options go too, unless another server uses them.")) + "</p>" +
+    (res.length ? "<p>" + esc(tp(res.length, "Its {n} reservation is deleted too.", "Its {n} reservations are deleted too.")) + "</p>" : ""), t("Delete")))) return;
+  CHANGES.push(...res.map(e => ({ op: "del", mac: e.mac })));
+  return queue({ op: "srv_del", name: f.name });
+}
 async function srvToggle(f) {
-  if (!f.enabled && f.name === CFG.dhcp.server && !(await ask(t("Turn on {name}?", { name: f.name }), "<p>" + esc(t(OTHER_DHCP_WARN)) + "</p>", t("Turn on")))) return;
+  const r = rawRouter(), srv = (r.dhcp_servers || []).find(x => x.name === f.name);
+  const rogue = srv ? liveServer(r, srv).unknown : [];
+  const warn = rogue.length ? t("Another DHCP server answers on {iface}: {macs}.", { iface: f.interface, macs: rogue.join(", ") }) + " " + t(OTHER_DHCP_WARN)
+    : f.name === CFG.dhcp.server ? t(OTHER_DHCP_WARN) : "";
+  if (!f.enabled && warn && !(await ask(t("Turn on {name}?", { name: f.name }), "<p>" + esc(warn) + "</p>", t("Turn on")))) return;
   return queue({ op: "srv_set", name: f.name, server: Object.assign({}, f, { enabled: !f.enabled }) });
 }
 
@@ -917,12 +979,174 @@ function renderDhcp() {
       '</td><td class="actions">' + (inFile.has(macUp(l)) ? "" : '<button data-act="res-from" data-mac="' + esc(l["mac-address"]) + '">' + t("Reserve") + "</button>") + "</td></tr>").join("") ||
       '<tr><td colspan="5" class="sub">' + (on ? t("No dynamic lease.") : t("None while the server is off.")) + "</td></tr>") + "</tbody>";
 
-  $("dhcp-names-box").hidden = !CFG.names_note;
-  $("dhcp-names-note").textContent = CFG.names_note || "";
+  // DNS integration of this switch: where the names go and how the last push went
+  const dn = D.dns, st2 = dn && dn.status;
+  $("dhcp-names-box").hidden = !CFG.names_note && !dn;
+  $("dhcp-names-note").textContent = !dn ? CFG.names_note || ""
+    : t("Published to {where} every 2 minutes.", { where: dn.kind === "routeros" ? t("the static DNS of {name}", { name: CFG.dhcp.switch }) : dn.targets.join(", ") }) + " " +
+      (!st2 ? t("Not sent yet.") : (st2.results || []).map(r => r.target + " : " + (r.ok ? (r.message === "unchanged" ? t("up to date") : r.message) : t("failed ({err})", { err: r.message }))).join(" · ") +
+        " · " + t("last sent {d} ago", { d: duration(Math.round((Date.now() - st2.t) / 1000)) }) +
+        (st2.skipped ? " · " + t("switch unreachable at the last pass: the previous names stay") : ""));
   $("dhcp-names").innerHTML = "<thead><tr><th>" + t("Name") + "</th><th>" + t("IP address") + "</th></tr></thead><tbody>" +
     (D.names.map(([ip, n]) => "<tr><td>" + esc(n) + "</td><td>" + esc(ip) + "</td></tr>").join("") ||
       '<tr><td colspan="2" class="sub">' + t("No bound lease with a usable name yet.") + "</td></tr>") + "</tbody>";
 }
+
+/* Infrastructure: one switch as WebFig's Quick Set shows it (src/infra.rs).
+   Direct mode: identity, DNS, one address, gateway; every change is rolled
+   back by the switch itself unless kept within rollback_s seconds. */
+
+let INF = null, INF_UNTIL = 0; // /api/infra of SW, when the switch rolls back (ms)
+
+async function loadInfra() {
+  const name = SW;
+  if (!name) return;
+  try { const v = await get("/api/infra?switch=" + encodeURIComponent(name)); if (name === SW) INF = v; }
+  catch (e) { if (name === SW) INF = { name, error: e.message }; }
+  if (VIEW === "infra") render(true);
+}
+
+const defaultRoutes = v => (v.routes || []).filter(r => r["dst-address"] === "0.0.0.0/0" && !yes(r.dynamic) && (!r["routing-table"] || r["routing-table"] === "main"));
+const dnsOf = v => list((v.dns || {}).servers);
+const vlanOf = (v, iface) => (v.vlan_ifaces || []).find(x => x.name === iface);
+
+function infraPending() {
+  const box = $("infra-pending"), v = INF;
+  const left = Math.max(0, Math.ceil((INF_UNTIL - Date.now()) / 1000));
+  const waiting = v && !v.error && (left > 0 || v.rollback);
+  box.hidden = !waiting;
+  if (!waiting) return;
+  box.innerHTML = '<div class="card-head"><h3>' + esc(t("Keep these settings on {name}?", { name: v.name })) + '</h3><span class="pill warn">' +
+    esc(left > 0 ? t("rollback in {n} s", { n: left }) : t("rollback at {time}", { time: (v.rollback || {})["next-run"] || "?" })) + "</span></div>" +
+    '<p class="sub">' + esc(t("Cairn Net read the switch back as asked. Without your confirmation, the switch puts the old settings back by itself.")) + "</p>" +
+    '<div class="toolbar"><button class="primary" data-act="infra-keep">' + esc(t("Keep")) + "</button></div>";
+}
+
+function renderInfra() {
+  $("infra-tabs").innerHTML = CFG.switches.map(s => '<button class="chip' + (s.name === SW ? " on" : "") + '" data-goto="infra/' + esc(s.name) + '">' + esc(s.name) + "</button>").join("");
+  const v = INF && INF.name === SW ? INF : null;
+  infraPending();
+  if (!v || v.error) {
+    $("infra-cards").innerHTML = '<p class="verdict ' + (v ? "bad" : "") + '">' + (v ? '<span class="dot bad"></span>' + esc(t("{name} unreachable: {err}", { name: SW, err: v.error })) : esc(t("Loading…"))) + "</p>";
+    for (const id of ["infra-addr", "infra-br", "infra-nat"]) $(id).innerHTML = "";
+    return;
+  }
+  const r = v.resource || {}, rb = v.routerboard || {}, up = v.update || {}, dns = v.dns || {};
+  const edit = v.mode === "direct" ? '<button data-act="infra-edit">' + esc(t("Edit")) + "</button>" : '<span class="pill">' + esc(t(MODE_LABEL[v.mode] || v.mode)) + "</span>";
+  // the switch's own check if it ran one, else what MikroTik publishes for its channel
+  const latest = up["latest-version"] || v.newest, inst = up["installed-version"] || r.version;
+  const upd = latest && latest !== inst ? [t("{v} available", { v: latest }), "warn"] : latest ? [t("up to date"), "ok"] : [t("not checked"), ""];
+  const fw = rb["current-firmware"] ? rb["current-firmware"] + (rb["upgrade-firmware"] && rb["upgrade-firmware"] !== rb["current-firmware"] ? " → " + rb["upgrade-firmware"] : "") : "—";
+  const kv = rows => '<dl class="kv">' + rows.map(([k, val, c]) => "<dt>" + esc(k) + '</dt><dd class="' + (c || "") + '">' + esc(val) + "</dd>").join("") + "</dl>";
+  const gws = defaultRoutes(v), dynGw = (v.routes || []).filter(x => yes(x.dynamic) && x["dst-address"] === "0.0.0.0/0");
+  const nat = (v.nat || []).filter(x => !yes(x.dynamic));
+  $("infra-cards").innerHTML =
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("System")) + "</h3>" + edit + "</div>" + kv([
+      [t("Identity"), v.identity || "—"], [t("Model"), rb.model || r["board-name"] || "—"], [t("Architecture"), r["architecture-name"] || "—"],
+      [t("RouterOS"), (inst || "—") + (up.channel ? " (" + up.channel + ")" : "")], [t("Update"), upd[0], upd[1]], [t("Firmware"), fw], [t("Up for"), duration(rosSeconds(r.uptime))],
+    ]) + "</article>" +
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Routing and DNS")) + "</h3></div>" + kv([
+      ...(gws.length ? gws.map(g => [t("Gateway"), g.gateway + (yes(g.active) ? "" : " · " + t("inactive")), yes(g.active) ? "" : "warn"]) : [[t("Gateway"), t("none")]]),
+      ...dynGw.map(g => [t("Gateway (DHCP client)"), g.gateway]),
+      [t("DNS servers"), dnsOf(v).join(", ") || "—"], ...(dns["dynamic-servers"] ? [[t("DNS from DHCP"), list(dns["dynamic-servers"]).join(", ")]] : []),
+      [t("Answers DNS for the network"), yes(dns["allow-remote-requests"]) ? t("yes") : t("no")],
+      [t("NAT"), nat.length ? tp(nat.length, "{n} rule", "{n} rules") : t("none")],
+    ]) + "</article>";
+
+  const addrs = (v.addresses || []).slice().sort((a, b) => natural(a.interface, b.interface));
+  $("infra-addr").innerHTML = "<thead><tr><th>" + [t("Interface"), t("Address"), t("Network"), t("Origin"), t("State")].join("</th><th>") + "</th></tr></thead><tbody>" +
+    (addrs.map(a => {
+      const vl = vlanOf(v, a.interface), st = yes(a.disabled) ? ["", t("disabled")] : yes(a.invalid) ? ["warn", t("invalid")] : ["ok", t("active")];
+      return "<tr><td><b>" + esc(a.interface) + "</b>" + (vl ? ' <span class="sub">' + esc(t("VLAN {id} on {iface}", { id: vl["vlan-id"], iface: vl.interface })) + "</span>" : "") +
+        (a.interface === v.mgmt_iface ? ' <span class="pill">' + esc(t("Cairn Net's path")) + "</span>" : "") + "</td><td>" + esc(a.address) + "</td><td>" + esc(a.network) +
+        "</td><td>" + esc(yes(a.dynamic) ? t("DHCP client") : t("static")) + '</td><td><span class="pill ' + st[0] + '">' + esc(st[1]) + "</span></td></tr>";
+    }).join("") || '<tr><td colspan="5" class="sub">' + esc(t("No IP address.")) + "</td></tr>") + "</tbody>";
+
+  const ports = v.ports || [], inBridge = new Set(ports.map(p => p.interface));
+  const loose = (v.ifaces || []).filter(i => ["ether", "bond"].includes(i.type) && !yes(i.slave) && !inBridge.has(i.name)).map(i => i.name).sort(natural);
+  $("infra-br").innerHTML = "<thead><tr><th>" + [t("Bridge"), t("Ports"), t("VLAN filtering"), t("Protocol"), t("Comment")].join("</th><th>") + "</th></tr></thead><tbody>" +
+    (v.bridges || []).map(b => {
+      const ps = ports.filter(p => p.bridge === b.name).map(p => short(p.interface) + (p.pvid && p.pvid !== "1" ? " (" + p.pvid + ")" : "") + (yes(p.disabled) ? " ✕" : ""));
+      return "<tr><td><b>" + esc(b.name) + '</b></td><td class="wrap">' + esc(ps.join(", ") || t("no port")) + "</td><td>" + esc(yes(b["vlan-filtering"]) ? t("yes") : t("no")) +
+        "</td><td>" + esc(b["protocol-mode"] || "") + '</td><td class="wrap sub">' + esc(b.comment || "") + "</td></tr>";
+    }).join("") +
+    (loose.length ? '<tr class="dim"><td>' + esc(t("outside any bridge")) + '</td><td class="wrap">' + esc(loose.map(short).join(", ")) + "</td><td></td><td></td><td></td></tr>" : "") + "</tbody>";
+
+  const match = x => [x.protocol && x.protocol + (x["dst-port"] ? ":" + x["dst-port"] : ""), x["src-address"] && t("from {v}", { v: x["src-address"] }),
+    x["dst-address"] && t("to {v}", { v: x["dst-address"] }), x["in-interface"] && t("in {v}", { v: x["in-interface"] }), x["out-interface"] && t("out {v}", { v: x["out-interface"] })].filter(Boolean).join(" · ");
+  $("infra-nat").innerHTML = "<thead><tr><th>" + [t("Chain"), t("Action"), t("Match"), t("To"), t("Comment")].join("</th><th>") + "</th></tr></thead><tbody>" +
+    ((v.nat || []).map(x => '<tr class="' + (yes(x.disabled) ? "dim" : "") + '"><td>' + esc(x.chain) + "</td><td><b>" + esc(x.action) + "</b>" + (yes(x.disabled) ? " · " + esc(t("disabled")) : "") +
+      "</td><td>" + esc(match(x) || t("everything")) + "</td><td>" + esc([x["to-addresses"], x["to-ports"]].filter(Boolean).join(":")) + '</td><td class="wrap sub">' + esc(x.comment || "") + "</td></tr>").join("") ||
+      '<tr><td colspan="5" class="sub">' + esc(t("No NAT rule.")) + "</td></tr>") + "</tbody>";
+}
+
+const MASKS = Array.from({ length: 32 }, (_, i) => i + 1);
+const maskText = l => { const m = 2 ** 32 - 2 ** (32 - l); return [24, 16, 8, 0].map(s => Math.floor(m / 2 ** s) % 256).join("."); };
+
+async function infraForm() {
+  const v = INF, gw = (defaultRoutes(v)[0] || {}).gateway || "";
+  const addrs = (v.addresses || []).filter(a => !yes(a.dynamic) && a.interface !== v.mgmt_iface);
+  const fd = await ask(t("Edit {name}", { name: v.name }),
+    "<label>" + esc(t("Identity")) + '<input name="identity" required maxlength="64" value="' + esc(v.identity || "") + '"></label>' +
+    "<label>" + esc(t("DNS servers, one per line")) + '<textarea name="dns" rows="3">' + esc(dnsOf(v).join("\n")) + "</textarea></label>" +
+    "<label>" + esc(t("Address to change")) + '<select name="addr"><option value="">' + esc(t("none")) + "</option>" +
+      addrs.map(a => '<option value="' + esc(a[".id"]) + '">' + esc(a.interface + " · " + a.address) + "</option>").join("") + "</select></label>" +
+    '<div class="cols2"><label>' + esc(t("New address")) + '<input name="ip" pattern="(\\d{1,3}\\.){3}\\d{1,3}" placeholder="10.0.0.1"></label>' +
+    "<label>" + esc(t("Netmask")) + '<select name="len">' + MASKS.map(l => '<option value="' + l + '"' + (l === 24 ? " selected" : "") + ">/" + l + " (" + maskText(l) + ")</option>").join("") + "</select></label></div>" +
+    "<label>" + esc(t("Gateway (default route)")) + '<input name="gateway" pattern="(\\d{1,3}\\.){3}\\d{1,3}" value="' + esc(gw) + '"></label>' +
+    '<p class="sub">' + esc(v.mgmt_iface ? t("{iface} is how Cairn Net reaches the switch: it is not offered here.", { iface: v.mgmt_iface }) : "") + " " +
+      esc(t("Nothing is written yet: the next step shows the commands.")) + "</p>",
+    t("Preview"), d => {
+      // picking an address fills its current value
+      const sel = d.querySelector('[name="addr"]');
+      sel.addEventListener("change", () => {
+        const a = addrs.find(x => x[".id"] === sel.value);
+        if (!a) return;
+        const [ip, l] = a.address.split("/");
+        d.querySelector('[name="ip"]').value = ip;
+        d.querySelector('[name="len"]').value = l;
+      });
+    });
+  if (!fd) return;
+  const g = k => String(fd.get(k) || "").trim();
+  const want = {};
+  if (g("identity") !== (v.identity || "")) want.identity = g("identity");
+  const dns = g("dns").split(/[\s,;]+/).filter(Boolean);
+  if (dns.join(",") !== dnsOf(v).join(",")) want.dns = dns;
+  if (g("addr") && g("ip")) want.address = { id: g("addr"), address: g("ip") + "/" + g("len") };
+  if (g("gateway") && g("gateway") !== gw) want.gateway = g("gateway");
+  if (!Object.keys(want).length) return banner(t("Nothing to change."), "ok");
+  let p;
+  try { p = await post("/api/infra/preview", { switch: v.name, want }); } catch (e) { p = { ok: false, error: e.message }; }
+  if (!p.ok) return banner(t("Refused: {err}", { err: problemText(p.error || "") }));
+  if (!p.commands.length) return banner(t("Nothing to change."), "ok");
+  banner("");
+  if (!(await ask(t("Apply on {name}?", { name: v.name }),
+    "<h3>" + esc(t("Commands")) + '</h3><pre class="diff">' + esc(p.commands.join("\n")) + "</pre>" +
+    "<h3>" + esc(t("Rollback, run by the switch after {n} s unless you keep the change", { n: p.rollback_s })) + '</h3><pre class="diff">' + esc(p.rollback.join("\n")) + "</pre>",
+    t("Apply")))) return;
+  let r;
+  try { r = await post("/api/infra/apply", { switch: v.name, want }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (r.verified) { INF_UNTIL = Date.now() + r.rollback_s * 1000; banner(""); }
+  else banner(r.pending ? t("{done} of {n} commands run on {name}", { done: r.done, n: r.commands.length, name: v.name }) + (r.error ? " · " + problemText(r.error) : "") +
+    " · " + t("the switch puts the old settings back within {n} s", { n: r.rollback_s }) : t("Refused: {err}", { err: problemText(r.error || "") }));
+  await loadInfra();
+}
+
+async function infraKeep() {
+  let r;
+  try { r = await post("/api/infra/confirm", { switch: INF.name }); } catch (e) { r = { ok: false, error: e.message }; }
+  INF_UNTIL = 0;
+  banner(r.ok ? t("Kept on {name}.", { name: INF.name }) : t("Refused: {err}", { err: problemText(r.error || "") }), r.ok ? "ok" : "");
+  await loadInfra();
+}
+
+// The countdown; at zero the switch has rolled back: read it again.
+setInterval(() => {
+  if (!INF_UNTIL || VIEW !== "infra") return;
+  if (Date.now() >= INF_UNTIL + 3000) { INF_UNTIL = 0; loadInfra(); }
+  infraPending();
+}, 1000);
 
 /* VLANs */
 
@@ -979,6 +1203,10 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.act === "dhcp-sw") return pickDhcp(d.name);
+  if (INF && !INF.error) switch (d.act) {
+    case "infra-edit": return infraForm();
+    case "infra-keep": return infraKeep();
+  }
   if (D) switch (d.act) {
     case "res-new": return resForm();
     case "res-edit": return resForm(D.entries.find(e => e.mac === d.mac));
@@ -989,11 +1217,13 @@ document.addEventListener("click", e => {
     case "srv-new": return srvForm();
     case "srv-edit": return srvForm(D.servers.find(x => x.name === d.name));
     case "srv-toggle": return srvToggle(D.servers.find(x => x.name === d.name));
+    case "srv-del": return srvDelete(D.servers.find(x => x.name === d.name));
   }
   if (SET) switch (d.act) {
     case "sw-new": return swForm();
     case "sw-edit": return swForm(SET.switches.find(x => x.name === d.name));
     case "sw-del": return swDelete(SET.switches.find(x => x.name === d.name));
+    case "dns-copy": return navigator.clipboard.writeText($("dns-line").textContent).then(() => { b.textContent = t("Copied"); });
     case "key-copy": return navigator.clipboard.writeText($("git-key").textContent).then(() => { b.textContent = t("Copied"); });
     case "prep-copy": return navigator.clipboard.writeText($("prep-script").textContent).then(() => { b.textContent = t("Copied"); });
   }

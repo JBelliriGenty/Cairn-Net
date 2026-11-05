@@ -446,6 +446,8 @@ dialog { max-height: calc(100vh - 32px); overflow: auto; }
 .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 @media (max-width: 520px) { .cols2 { grid-template-columns: 1fr; } }
 .banner.warn-note { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn); margin: 0 0 12px; }
+.banner.bad-note { background: var(--bad-bg); color: var(--bad-ink); border-color: var(--bad); margin: 0 0 12px; }
+#dhcp-srv > .banner { grid-column: 1 / -1; margin: 0; }
 .srv .foot { margin: auto 0 0; }
 .srv .actions { display: flex; gap: 6px; }
 /* settings */

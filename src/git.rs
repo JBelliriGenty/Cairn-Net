@@ -17,7 +17,7 @@ static DATA: OnceLock<String> = OnceLock::new();
 static LOCK: Mutex<()> = Mutex::new(());
 static SYNCED: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
-fn data() -> &'static str {
+pub(crate) fn data() -> &'static str {
     DATA.get().map(String::as_str).unwrap_or("/var/lib/cairn-net")
 }
 
@@ -44,9 +44,15 @@ fn dir(sw: &SwitchCfg) -> PathBuf {
     Path::new(data()).join("git").join(&sw.name)
 }
 
+/// ssh with the app's key (git and the DNS hosts targets): hosts accepted at first use.
+pub(crate) fn ssh_options() -> Vec<String> {
+    let k = key().display().to_string();
+    let kh = format!("UserKnownHostsFile={}/known_hosts", data());
+    ["-i", &k, "-o", "IdentitiesOnly=yes", "-o", &kh, "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"].map(String::from).to_vec()
+}
+
 fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
-    let ssh = format!("ssh -i {} -o IdentitiesOnly=yes -o UserKnownHostsFile={}/known_hosts -o StrictHostKeyChecking=accept-new -o BatchMode=yes",
-        key().display(), data());
+    let ssh = format!("ssh {}", ssh_options().join(" "));
     let mut c = Command::new("git");
     if let Some(d) = cwd {
         c.current_dir(d);

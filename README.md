@@ -39,7 +39,15 @@ Demo data.
 - **VLANs**: which ports carry which VLAN, tagged or untagged.
 - **DHCP**: servers (pool use, options, static routes) and reservations of
   the router, with an editor that shows the difference before anything is
-  written.
+  written. Servers can be added, renamed and deleted, take any DHCP option
+  (code and value), and can watch their interface for another DHCP server.
+  The names of the leases can be published to a DNS server (below).
+- **Infrastructure**: one page per switch, like WebFig's Quick Set:
+  identity, addresses per interface or VLAN, default gateway, DNS, bridges
+  and their ports, NAT rules, RouterOS and firmware versions, available
+  update, uptime. In direct mode, the identity, DNS servers, one address
+  and the gateway can be changed, each change guarded by an automatic
+  rollback (below).
 - **Settings**: switches are added from the page. Cairn Net reads the
   certificate of the switch first, you compare its fingerprint, then the
   accounts are tried. A RouterOS script to prepare a switch is shown there.
@@ -51,7 +59,7 @@ Per switch, in Settings:
 | Mode | What Cairn Net does |
 |---|---|
 | **Read only** (default) | Reads. Nothing is ever written. |
-| **Direct** | Writes the DHCP servers and reservations to the switch through its API, with a second account that can write. It reads the switch back afterwards and says whether it matches. |
+| **Direct** | Writes the DHCP servers and reservations, and the Infrastructure settings, to the switch through its API, with a second account that can write. It reads the switch back afterwards and says whether it matches. |
 | **Git** | Edits a DHCP file in a Git repository and pushes one commit per change, under the name of the person who applies it. Your own tool (Ansible, CI…) applies the file to the switch. |
 
 Direct mode suits a router managed by hand; Git mode suits one managed as
@@ -167,12 +175,69 @@ dhcp_servers:
     lease_time: 1d
     routes:
       - "192.168.20.0/24,192.168.10.254"
+    options:                        # any other option, RouterOS syntax
+      - "66,'tftp.home.arpa'"
+    alert: true                     # watch for another DHCP server
+    alert_valid: [AA:BB:CC:DD:EE:09]  # other servers that are expected
 ```
 
 Applying it is up to you: for example an Ansible play that turns each
 reservation into a static lease and each server into
 `/ip dhcp-server`, `/ip pool` and `/ip dhcp-server network` (routes as
 option 121).
+
+## Another DHCP server on the network
+
+With `alert` on, the switch probes the server's interface with a DHCP
+discover every minute (RouterOS `/ip dhcp-server alert`). A server that
+answers and is not in `alert_valid` shows on the server card, with its MAC
+address, for an hour after it was last seen. Useful before switching DHCP
+from one box to another, and to catch a forgotten home router.
+
+## Names of the leases in DNS
+
+Per switch, in Settings: publish the names of the bound leases (device name
+in lower case, letters, digits and dashes), of all DHCP servers or some of
+them, every 2 minutes. A switch that cannot be read sends nothing: the
+previous names stay.
+
+- **Static DNS of the switch** (write account): entries in `/ip dns static`
+  commented `cairn-net`, named `name.domain` when the DHCP network has a
+  domain. Other entries are never touched.
+- **Hosts file over SSH** (Pi-hole, dnsmasq `hostsdir`): Cairn Net sends
+  `IP name` lines with its own SSH key (the one shown for Git) to each
+  `user@host[:port]`. On the DNS server, copy `examples/cairn-net-hosts` to
+  `/usr/local/bin` (mode 755) and force it in `authorized_keys`, so that the
+  key can do nothing else:
+
+  ```
+  command="/usr/local/bin/cairn-net-hosts /etc/pihole/hosts/cairn-net.list /etc/pihole/hosts/custom.list",restrict ssh-ed25519 AAAA… cairn-net
+  ```
+
+  The first path is the file it writes; the next ones hold names it must
+  not publish again (compared without their domain). Settings shows this
+  line with your key.
+
+## Infrastructure changes and their rollback
+
+Changing an address or a gateway can cut the switch off. So, in direct
+mode, before the first command Cairn Net adds a RouterOS scheduler
+(`cairn-net-rollback`) holding the old values. Then it runs the commands,
+reads the switch back through a new connection and starts a 60 s
+countdown. **Keep** (a new connection again) removes the scheduler; without
+it, the switch puts the old settings back by itself and logs
+`cairn-net: change not confirmed, rolled back`. The preview shows both the
+commands and the rollback script.
+
+The interface Cairn Net reaches the switch through is never offered, and a
+new address may not overlap the network of the switch's management address
+or of Cairn Net's own address. Reset, password, VPN, router/bridge mode,
+NAT, reboot and upgrade are not done from here.
+
+The read account may not run `check-for-updates`: the page compares the
+installed RouterOS with the version MikroTik publishes for the switch's
+channel (`https://upgrade.mikrotik.com/routeros/NEWESTa7.<channel>`, fetched
+by Cairn Net at most every 6 hours).
 
 ## Security notes
 
@@ -182,7 +247,8 @@ option 121).
 - Passwords of the switch accounts are kept in `data/settings.json`
   (mode 600, owner of the container), never sent back to the page.
 - Every write is shown first as a difference; direct mode reads the switch
-  back after writing.
+  back after writing, and Infrastructure changes roll back by themselves
+  unless confirmed.
 - No third-party JavaScript, a strict Content-Security-Policy, POSTs in
   JSON only.
 

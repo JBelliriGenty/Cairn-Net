@@ -1,0 +1,29 @@
+#!/bin/sh
+# cairn-net-hosts: receiver of Cairn Net's DNS "hosts" integration.
+# Install it on the DNS server (e.g. /usr/local/bin/cairn-net-hosts, mode 755)
+# and force it in authorized_keys, so that Cairn Net's key can do nothing else:
+#
+#   command="/usr/local/bin/cairn-net-hosts /etc/pihole/hosts/cairn-net.list /etc/pihole/hosts/custom.list",restrict ssh-ed25519 AAAA… cairn-net
+#
+# Arguments: the file to write, then files whose names must not be published
+# again (compared without their domain: "nas" and "nas.home" are the same).
+# Reads "IP name" lines on stdin, keeps the valid ones, then replaces the file
+# in one move. dnsmasq and Pi-hole re-read a hosts directory (hostsdir) when a
+# file in it changes. Answers one line: "<n> names" or "unchanged".
+set -eu
+[ $# -ge 1 ] || { echo "usage: cairn-net-hosts FILE [SKIP-FILE...]" >&2; exit 2; }
+out=$1
+shift
+tmp=$(dirname "$out")/.$(basename "$out").tmp
+SKIP=$(cat "$@" 2>/dev/null | awk '{ for (i = 2; i <= NF; i++) { n = tolower($i); sub(/\..*/, "", n); print n } }' || true)
+export SKIP
+head -c 1000000 | tr -d '\r' | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3} [a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' | head -n 5000 |
+  awk 'BEGIN { n = split(ENVIRON["SKIP"], s, "\n"); for (i = 1; i <= n; i++) seen[s[i]] = 1 } !seen[$2] && !dup[$2]++' > "$tmp" || true
+if [ -f "$out" ] && cmp -s "$tmp" "$out"; then
+  rm -f "$tmp"
+  echo unchanged
+else
+  chmod 644 "$tmp"
+  mv "$tmp" "$out"
+  echo "$(wc -l < "$out") names"
+fi

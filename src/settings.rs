@@ -31,6 +31,10 @@ pub struct SwitchCfg {
     pub git_url: String,
     pub git_branch: String,
     pub git_path: String,
+    // DNS integration: none, hosts (SSH targets) or routeros; leases of these servers (none = all)
+    pub dns: String,
+    pub dns_targets: Vec<String>,
+    pub dns_servers: Vec<String>,
 }
 
 pub fn pin(s: &str) -> String {
@@ -40,6 +44,10 @@ pub fn pin(s: &str) -> String {
 /// AA:BB:… as RouterOS and openssl print it.
 pub fn pretty(p: &str) -> String {
     p.as_bytes().chunks(2).map(|c| String::from_utf8_lossy(c).to_uppercase()).collect::<Vec<_>>().join(":")
+}
+
+fn list(v: &Value) -> Vec<String> {
+    v.as_array().map(|a| a.iter().filter_map(|x| Some(x.as_str()?.trim().to_string())).filter(|x| !x.is_empty()).collect()).unwrap_or_default()
 }
 
 impl SwitchCfg {
@@ -60,6 +68,9 @@ impl SwitchCfg {
             git_url: s("git_url"),
             git_branch: Some(s("git_branch")).filter(|b| !b.is_empty()).unwrap_or_else(|| "main".into()),
             git_path: s("git_path"),
+            dns: Some(s("dns")).filter(|m| !m.is_empty()).unwrap_or_else(|| "none".into()),
+            dns_targets: list(&v["dns_targets"]),
+            dns_servers: list(&v["dns_servers"]),
         }
     }
 
@@ -67,7 +78,8 @@ impl SwitchCfg {
     pub fn to_json(&self, secrets: bool) -> Value {
         let mut v = json!({"name": self.name, "host": self.host, "port": self.port, "sha256": pretty(&self.sha256), "user": self.user,
             "write_user": self.write_user, "mode": self.mode, "ignore": self.ignore, "url": self.url,
-            "git_url": self.git_url, "git_branch": self.git_branch, "git_path": self.git_path});
+            "git_url": self.git_url, "git_branch": self.git_branch, "git_path": self.git_path,
+            "dns": self.dns, "dns_targets": self.dns_targets, "dns_servers": self.dns_servers});
         if secrets {
             v["password"] = json!(self.password);
             v["write_password"] = json!(self.write_password);
@@ -121,6 +133,18 @@ impl SwitchCfg {
             if self.git_path.is_empty() || self.git_path.starts_with('/') || self.git_path.split('/').any(|p| p == ".." || p.is_empty()) {
                 return Err("the file path must be relative to the repository (e.g. network/dhcp.yml)".into());
             }
+        }
+        if !crate::dns::KINDS.contains(&self.dns.as_str()) {
+            return Err("unknown DNS integration".into());
+        }
+        if self.dns == "hosts" && (self.dns_targets.is_empty() || !self.dns_targets.iter().all(|t| crate::dns::target_ok(t))) {
+            return Err("DNS hosts targets: one or more user@host[:port]".into());
+        }
+        if self.dns == "routeros" && (self.write_user.is_empty() || self.write_password.is_empty()) {
+            return Err("RouterOS static DNS needs the write account".into());
+        }
+        if !self.dns_servers.iter().all(|s| crate::dhcp::is_name(s)) {
+            return Err("invalid DHCP server name".into());
         }
         if [&self.user, &self.write_user].iter().any(|u| u.contains(['=', '\n'])) || [&self.password, &self.write_password].iter().any(|p| p.contains('\n')) {
             return Err("invalid account".into());
@@ -231,6 +255,13 @@ mod tests {
         assert_eq!(SwitchCfg::from_json(&s.to_json(true)), s);
         assert!(s.to_json(false).get("password").is_none());
         assert_eq!(pretty(&s.sha256), v["sha256"].as_str().unwrap());
+        let mut h = s.clone();
+        h.dns = "hosts".into();
+        assert!(h.check().is_err(), "hosts needs a target");
+        h.dns_targets = vec!["root@10.0.0.2".into()];
+        assert!(h.check().is_ok() && SwitchCfg::from_json(&h.to_json(true)) == h);
+        h.dns = "routeros".into();
+        assert!(h.check().is_err(), "routeros needs the write account");
         let mut d = s.clone();
         d.mode = "direct".into();
         assert!(d.check().is_err(), "direct needs a write account");

@@ -23,7 +23,9 @@
 
 mod dhcp;
 mod direct;
+mod dns;
 mod git;
+mod infra;
 mod login;
 mod servers;
 mod settings;
@@ -202,6 +204,14 @@ impl Api {
         Ok(api)
     }
 
+    /// Cairn Net's own address on this connection, as the switch sees it.
+    fn local_ip(&self) -> Option<std::net::Ipv4Addr> {
+        match self.0.get_ref().local_addr().ok()?.ip() {
+            std::net::IpAddr::V4(a) => Some(a),
+            std::net::IpAddr::V6(_) => None,
+        }
+    }
+
     fn byte(&mut self) -> std::io::Result<u8> {
         let mut b = [0u8; 1];
         self.0.read_exact(&mut b)?;
@@ -312,6 +322,7 @@ fn slow_one(api: &mut Api) -> Result<Value, String> {
         "dhcp_servers": print(api, "/ip/dhcp-server", "name,disabled,invalid,address-pool,interface,lease-time,authoritative,comment", &[])?,
         "dhcp_networks": print(api, "/ip/dhcp-server/network", "address,gateway,dns-server,domain,ntp-server,dhcp-option,comment", &[])?,
         "dhcp_options": print(api, "/ip/dhcp-server/option", "name,code,value,comment", &[])?,
+        "dhcp_alerts": print(api, "/ip/dhcp-server/alert", "interface,valid-server,unknown-server,disabled", &[])?,
         "addresses": print(api, "/ip/address", "address,interface,disabled", &[])?,
         "vlan_ifaces": print(api, "/interface/vlan", "name,vlan-id,interface", &[])?,
         "pools": print(api, "/ip/pool", "name,ranges", &[])?,
@@ -467,13 +478,18 @@ fn dhcp_view(src: &Src) -> Value {
         Err(e) => (String::new(), json!(e)),
     };
     let lines: Vec<String> = text.lines().map(String::from).collect();
-    let names = match src {
-        Src::File(d) | Src::Git(_, Some(d)) => {
-            let s: Value = serde_json::from_str(&slow()).unwrap_or(Value::Null);
-            let router = s["switches"].as_array().into_iter().flatten().find(|x| x["name"] == d.switch.as_str()).cloned().unwrap_or(Value::Null);
-            dhcp::names_file(router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]), &d.server)
-        }
-        _ => vec![], // DNS integrations: later
+    let name = match src {
+        Src::File(d) => d.switch.clone(),
+        Src::Git(sw, _) | Src::Direct(sw) => sw.cfg.name.clone(),
+    };
+    let s: Value = serde_json::from_str(&slow()).unwrap_or(Value::Null);
+    let router = s["switches"].as_array().into_iter().flatten().find(|x| x["name"] == name.as_str()).cloned().unwrap_or(Value::Null);
+    // the names the DNS integration publishes (or, without one, those of the configured server)
+    let dns_cfg = settings::get(&name).map(|sw| sw.cfg.clone()).filter(|c| c.dns != "none");
+    let names: Vec<(String, String)> = match (&dns_cfg, src) {
+        (Some(c), _) => dns::names(&router, &c.dns_servers).into_iter().map(|(ip, n, _)| (ip, n)).collect(),
+        (None, Src::File(d) | Src::Git(_, Some(d))) => dhcp::names_file(router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]), &[d.server.clone()]),
+        _ => vec![],
     };
     json!({
         "text": text,
@@ -481,6 +497,7 @@ fn dhcp_view(src: &Src) -> Value {
         "problems": problems(src, &text),
         "servers": servers::parse(&lines).iter().map(servers::to_json).collect::<Vec<_>>(),
         "names": names.into_iter().map(|(ip, n)| json!([ip, n])).collect::<Vec<_>>(),
+        "dns": dns_cfg.map(|c| json!({"kind": c.dns, "targets": c.dns_targets, "servers": c.dns_servers, "status": dns::status(&name)})),
         "router_error": err,
         // git mode: the commit needs the deploy key added with write access
         "can_apply": matches!(src, Src::Direct(_) | Src::Git(..)),
@@ -552,6 +569,112 @@ fn dhcp_apply(src: &Src, a: &Value, user: &str, author: &str) -> Value {
     })();
     forget_cache();
     res.unwrap_or_else(|e| json!({"ok": false, "error": e}))
+}
+
+/* ---------- Infrastructure (src/infra.rs) ---------- */
+
+fn infra_view(name: &str) -> Value {
+    let Some(sw) = settings::get(name) else { return json!({"error": format!("{name}: unknown switch")}) };
+    let mut v = with_api(&sw, |api| {
+        let mut v = infra::read(api)?;
+        // the interface Cairn Net reaches the switch through: shown, never offered for editing
+        if let Ok(p) = path_of(&sw.cfg, api) {
+            v["mgmt_iface"] = json!(infra::mgmt_iface(&v, &p));
+        }
+        Ok(v)
+    }).unwrap_or_else(|e| json!({"error": e}));
+    if v["error"].is_null() {
+        // outside with_api: not holding the switch's connection while fetching
+        v["newest"] = json!(infra::newest(v["update"]["channel"].as_str().unwrap_or("stable")));
+    }
+    v["name"] = json!(sw.cfg.name);
+    v["mode"] = json!(sw.cfg.mode);
+    v["rollback_s"] = json!(infra::ROLLBACK_S);
+    v
+}
+
+fn path_of(sw: &SwitchCfg, api: &Api) -> Result<infra::Path, String> {
+    let switch = (sw.host.as_str(), sw.port).to_socket_addrs().map_err(|e| e.to_string())?
+        .find_map(|a| match a.ip() { std::net::IpAddr::V4(v) => Some(v), _ => None }).ok_or("the switch has no IPv4 address")?;
+    Ok(infra::Path { switch, app: api.local_ip() })
+}
+
+fn direct_switch(v: &Value) -> Result<Arc<Switch>, String> {
+    let name = v["switch"].as_str().unwrap_or("");
+    let sw = settings::get(name).ok_or_else(|| format!("{name}: unknown switch"))?;
+    if sw.cfg.mode != "direct" {
+        return Err(format!("{name} is not in direct mode: nothing is written to it"));
+    }
+    Ok(sw)
+}
+
+fn infra_preview(v: &Value) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let w = infra::Want::from_json(&v["want"]);
+    let (cmds, undo) = with_api(&sw, |api| {
+        let path = path_of(&sw.cfg, api)?;
+        infra::plan(&infra::read(api)?, &w, &path)
+    })?;
+    Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S}))
+}
+
+fn rollback_left(api: &mut Api) -> Result<bool, String> {
+    Ok(!print(api, "/system/scheduler", ".id", &[&format!("?name={}", infra::ROLLBACK)])?.is_empty())
+}
+
+/// Rollback armed, commands run, then a new connection reads the switch back;
+/// if it reads as asked, the rollback countdown starts again from now (the
+/// page has ROLLBACK_S seconds to confirm). Otherwise the rollback stays armed.
+fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let c = &sw.cfg;
+    let w = infra::Want::from_json(&v["want"]);
+    let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
+    if rollback_left(&mut api)? {
+        return Err("a change is still waiting for its confirmation: confirm it or wait for the rollback".into());
+    }
+    let path = path_of(c, &api)?;
+    let (cmds, undo) = infra::plan(&infra::read(&mut api)?, &w, &path)?;
+    if cmds.is_empty() {
+        return Ok(json!({"ok": true, "commands": [], "pending": false}));
+    }
+    let (done, err) = direct::run(&mut api, &[infra::arm(&undo)]);
+    if done == 0 {
+        return Err(format!("rollback not armed, nothing changed: {}", err.unwrap_or_default()));
+    }
+    let (done, err) = direct::run(&mut api, &cmds);
+    drop(api);
+    forget_cache();
+    // a new connection: the switch must still be reachable the way Cairn Net reaches it
+    let back = Api::connect(c, &c.write_user, &c.write_password).and_then(|mut a| {
+        let live = infra::read(&mut a)?;
+        let ok = infra::matches(&live, &w);
+        if ok {
+            let clock = print(&mut a, "/system/clock", "date,time", &[])?.pop().unwrap_or_default();
+            a.call(&["/system/scheduler/set", &format!("=numbers={}", infra::ROLLBACK), &format!("=start-date={}", clock["date"].as_str().unwrap_or("")),
+                &format!("=start-time={}", clock["time"].as_str().unwrap_or(""))])?;
+        }
+        Ok(ok)
+    });
+    let verified = matches!(back, Ok(true));
+    eprintln!("infra applied on {} by {user}: {done}/{} commands{}, read back: {}", c.name, cmds.len(),
+        err.as_ref().map_or(String::new(), |e| format!(", error: {e}")), back.as_ref().map_or_else(|e| format!("error: {e}"), |ok| if *ok { "as asked".into() } else { "differs".into() }));
+    Ok(json!({"ok": err.is_none() && verified, "done": done, "commands": infra::show_all(&cmds), "error": err.or(back.err()),
+        "verified": verified, "pending": true, "rollback_s": infra::ROLLBACK_S}))
+}
+
+/// The page still reaches the switch (new connection): the rollback goes.
+fn infra_confirm(v: &Value, user: &str) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let c = &sw.cfg;
+    let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
+    if !rollback_left(&mut api)? {
+        return Err("no change waiting: the switch already put the old settings back".into());
+    }
+    api.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)])?;
+    eprintln!("infra confirmed on {} by {user}", c.name);
+    forget_cache();
+    Ok(json!({"ok": true}))
 }
 
 /* ---------- Settings ---------- */
@@ -708,6 +831,9 @@ fn handle(cfg: &'static Config, mut r: Request) {
                 Ok(src) => dhcp_preview(&src, &v),
                 Err(e) => json!({"ok": false, "error": e}),
             },
+            "/api/infra/preview" => infra_preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/infra/apply" => infra_apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/infra/confirm" => infra_confirm(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/settings/probe" => probe(&v),
             "/api/settings" => match settings::apply(&v) {
                 Ok(()) => {
@@ -741,6 +867,10 @@ fn handle(cfg: &'static Config, mut r: Request) {
         "/api/fast" => respond(r, 200, fast(), "application/json"),
         "/api/slow" => respond(r, 200, slow(), "application/json"),
         "/api/settings" => respond(r, 200, settings_view().to_string(), "application/json"),
+        "/api/infra" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, infra_view(&q).to_string(), "application/json")
+        }
         "/api/dhcp" => {
             let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
             match source(cfg, &q) {
@@ -773,6 +903,12 @@ fn main() {
     }
     .expect("cannot listen");
     eprintln!("cairn-net listening on {}", cfg.listen);
+    // DNS integrations: every 2 minutes, from the shared read of the switches
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(20));
+        dns::publish(&serde_json::from_str(&slow()).unwrap_or(Value::Null));
+        std::thread::sleep(Duration::from_secs(100));
+    });
     for r in server.incoming_requests() {
         std::thread::spawn(move || handle(cfg, r));
     }

@@ -159,10 +159,10 @@ pub fn lease_name(host: &str) -> Option<String> {
 }
 
 /// "IP name" lines, sorted, one per name.
-pub fn names_file(leases: &[Value], server: &str) -> Vec<(String, String)> {
+pub fn names_file(leases: &[Value], servers: &[String]) -> Vec<(String, String)> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out: Vec<(String, String)> = leases.iter()
-        .filter(|l| l["server"] == server && l["status"] == "bound")
+        .filter(|l| (servers.is_empty() || servers.iter().any(|s| l["server"] == s.as_str())) && l["status"] == "bound")
         .filter_map(|l| Some((l["address"].as_str()?.to_string(), lease_name(l["host-name"].as_str()?)?)))
         .collect();
     out.sort();
@@ -178,7 +178,7 @@ pub fn to_json(e: &Entry) -> Value {
 mod tests {
     use super::*;
 
-    const FILE: &str = "---\n# header\ndhcp_reservations:\n  - \"10:98:C3:DB:F0:E2,192.168.1.121,PRINTER\"\n  # DESKTOP (office)\n  # second line\n  - \"BC:24:11:35:B4:8A,192.168.1.120,DESKTOP\"\n";
+    const FILE: &str = "---\n# header\ndhcp_reservations:\n  - \"02:00:00:00:00:21,192.168.1.121,PRINTER\"\n  # DESKTOP (office)\n  # second line\n  - \"BC:24:11:35:B4:8A,192.168.1.120,DESKTOP\"\n";
 
     #[test]
     fn parses_entries_and_comments() {
@@ -208,11 +208,11 @@ mod tests {
     fn edits_keep_the_rest() {
         let add = apply(FILE, &[json!({"op": "add", "mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.1.7", "name": "X", "comment": "new one"})]).unwrap();
         assert!(add.ends_with("DESKTOP\"\n  # new one\n  - \"AA:BB:CC:DD:EE:FF,192.168.1.7,X\"\n"), "{add}");
-        let set = apply(FILE, &[json!({"op": "set", "old_mac": "10:98:c3:db:f0:e2", "mac": "10:98:C3:DB:F0:E2", "ip": "192.168.1.122", "name": "PRINTER"})]).unwrap();
+        let set = apply(FILE, &[json!({"op": "set", "old_mac": "02:00:00:00:00:21", "mac": "02:00:00:00:00:21", "ip": "192.168.1.122", "name": "PRINTER"})]).unwrap();
         assert!(set.contains("192.168.1.122,PRINTER") && set.contains("# DESKTOP"));
         let del = apply(FILE, &[json!({"op": "del", "mac": "BC:24:11:35:B4:8A"})]).unwrap();
-        assert_eq!(del, "---\n# header\ndhcp_reservations:\n  - \"10:98:C3:DB:F0:E2,192.168.1.121,PRINTER\"\n");
-        assert!(apply(FILE, &[json!({"op": "add", "mac": "10:98:C3:DB:F0:E2", "ip": "192.168.1.9", "name": "Y"})]).is_err());
+        assert_eq!(del, "---\n# header\ndhcp_reservations:\n  - \"02:00:00:00:00:21,192.168.1.121,PRINTER\"\n");
+        assert!(apply(FILE, &[json!({"op": "add", "mac": "02:00:00:00:00:21", "ip": "192.168.1.9", "name": "Y"})]).is_err());
         assert!(apply(FILE, &[json!({"op": "add", "mac": "AA:BB:CC:DD:EE:FF", "ip": "1\"", "name": "Y"})]).is_err());
     }
 
@@ -220,7 +220,7 @@ mod tests {
     fn lease_names_follow_the_timer_rules() {
         let l = |ip: &str, h: &str, st: &str| json!({"server": "lan", "status": st, "address": ip, "host-name": h});
         let n = names_file(&[l("192.168.1.130", "Phone-of-Alex", "bound"), l("192.168.1.131", "bad name", "bound"),
-            l("192.168.1.132", "Old", "waiting"), l("192.168.1.133", "phone-of-alex", "bound")], "lan");
+            l("192.168.1.132", "Old", "waiting"), l("192.168.1.133", "phone-of-alex", "bound")], &["lan".into()]);
         assert_eq!(n, vec![("192.168.1.130".to_string(), "phone-of-alex".to_string())]);
     }
 }
