@@ -136,7 +136,7 @@ const VENDORS: &[(&str, &str, &str)] = &[
 
 // Words in a device name (lower case, trailing digits dropped: "cam2" -> "cam").
 const WORDS: &[(&str, &[&str])] = &[
-    ("router", &["router", "gateway", "gw", "livebox", "freebox", "fritzbox", "fritz", "bbox", "opnsense", "pfsense", "openwrt", "edgerouter"]),
+    ("router", &["router", "gateway", "gw", "box", "isp", "freebox", "fritzbox", "fritz", "bbox", "opnsense", "pfsense", "openwrt", "edgerouter"]),
     ("ap", &["ap", "uap", "unifi", "wifi", "wlan", "accesspoint", "nanohd"]),
     ("switch", &["switch", "sw"]),
     ("nas", &["nas", "qnap", "synology", "diskstation", "truenas", "unraid", "omv", "zimacube"]),
