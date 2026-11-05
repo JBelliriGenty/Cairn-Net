@@ -1,4 +1,4 @@
-//! Git mode: the DHCP file lives in a repository; the
+//! Git mode: the DHCP and firewall files live in a repository; the
 //! app keeps a shallow clone per switch in the data directory, edits the file
 //! and pushes a commit under the user's name. Applying to the switch is left
 //! to the user's own tool (Ansible, CI). One SSH deploy key for the whole app,
@@ -93,27 +93,40 @@ fn sync(sw: &SwitchCfg, force: bool) -> Result<PathBuf, String> {
     Ok(d)
 }
 
-pub fn read(sw: &SwitchCfg) -> Result<String, String> {
+/// `file` (sw.git_path or sw.git_fw_path) at the tip of the branch.
+pub fn read(sw: &SwitchCfg, file: &str) -> Result<String, String> {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let d = sync(sw, false)?;
-    fs::read_to_string(d.join(&sw.git_path)).map_err(|e| format!("{}: {e}", sw.git_path))
+    fs::read_to_string(d.join(file)).map_err(|e| format!("{file}: {e}"))
 }
 
 /// Rebuilds the file from the branch tip with `edit`, commits it as `author`
 /// ("Name <mail>") and pushes. A push refused (someone pushed meanwhile)
-/// leaves nothing behind: the clone is reset at the next read.
-pub fn commit(sw: &SwitchCfg, author: &str, message: &str, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
+/// leaves nothing behind: the clone is reset at the next read. A missing
+/// file reads as empty (created by the commit). None: `edit` changed nothing.
+pub fn commit(sw: &SwitchCfg, file: &str, author: &str, message: &str, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<Option<String>, String> {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let d = sync(sw, true)?;
-    let f = d.join(&sw.git_path);
-    let new = edit(&fs::read_to_string(&f).map_err(|e| format!("{}: {e}", sw.git_path))?)?;
+    let f = d.join(file);
+    let old = match fs::read_to_string(&f) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        r => r.map_err(|e| format!("{file}: {e}"))?,
+    };
+    let new = edit(&old)?;
+    if new == old {
+        return Ok(None);
+    }
+    if let Some(p) = f.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
     fs::write(&f, new).map_err(|e| e.to_string())?;
     let who = format!("user.name={}", author.split(" <").next().unwrap_or(author));
     let mail = format!("user.email={}", author.split_once(" <").map_or("cairn-net@localhost", |(_, m)| m.trim_end_matches('>')));
     let r = (|| {
-        git(Some(&d), &["-c", &who, "-c", &mail, "commit", "--quiet", "-m", message, "--", &sw.git_path])?;
+        git(Some(&d), &["add", "--", file])?;
+        git(Some(&d), &["-c", &who, "-c", &mail, "commit", "--quiet", "-m", message, "--", file])?;
         git(Some(&d), &["push", "--quiet", "origin", &format!("HEAD:refs/heads/{}", sw.git_branch)])?;
-        git(Some(&d), &["rev-parse", "--short", "HEAD"])
+        git(Some(&d), &["rev-parse", "--short", "HEAD"]).map(Some)
     })();
     if r.is_err() {
         // the next read fetches again and resets the clone to the branch tip

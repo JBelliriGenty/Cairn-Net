@@ -457,5 +457,59 @@ dialog { max-height: calc(100vh - 32px); overflow: auto; }
 .prep input { padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); }
 .prep pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: var(--track); padding: 12px; border-radius: 6px; margin: 0 0 10px; }
 dialog .banner { margin: 0 0 12px; }
-.ro-dhcp [data-act^="res-"], .ro-dhcp [data-act^="srv-"] { display: none; }
+.ro-dhcp [data-act^="res-"], .ro-dhcp [data-act^="srv-"], .ro-dhcp [data-act^="sn-"] { display: none; }
 .banner[data-kind="ok"] { background: var(--ok-bg); color: var(--ok-ink); border-color: var(--ok); }
+/* topology (www/topo.js): hand-drawn SVG, colours from the theme tokens (no inline style: CSP) */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sprite symbol, .kicon, .kicon-s { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.kicon-s { width: 18px; height: 18px; flex: none; }
+.chip.kind { white-space: nowrap; }
+fieldset.kinds label.swatch { gap: 6px; }
+.topo-bar { align-items: center; }
+.topo-bar button { min-width: 36px; }
+.topo-wrap { padding: 0; overflow: hidden; height: max(380px, calc(100vh - 230px)); }
+#topo { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+#topo:active { cursor: grabbing; }
+#topo a { cursor: pointer; }
+#topo a:focus-visible { outline: none; }
+#topo a:focus-visible .box, #topo a:focus-visible .hit { stroke: var(--accent); stroke-width: 2; }
+#topo text { fill: var(--fg); font-size: 12px; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+#topo .t-name { font-weight: 600; }
+#topo .t-name.big { font-size: 15px; }
+#topo .t-sub, #topo .t-port, #topo .t-what { fill: var(--muted); font-size: 11px; }
+#topo .t-port { font-size: 10px; font-family: ui-monospace, Consolas, monospace; }
+#topo .t-what, #topo .t-rate { text-anchor: middle; }
+#topo .t-rate { font-size: 11px; font-weight: 600; fill: var(--rx-ink); font-variant-numeric: tabular-nums; }
+#topo .t-sub.rate { fill: var(--rx-ink); font-variant-numeric: tabular-nums; }
+#topo .t-sub.rate.wire-rate { font-size: 10px; }
+#topo .t-sub.bad { fill: var(--bad); }
+#topo .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+#topo .t-sw:hover .box { stroke: var(--accent); }
+#topo .t-sw.warn .box { stroke: var(--warn); } #topo .t-sw.bad .box { stroke: var(--bad); stroke-width: 2; }
+#topo .hit { fill: transparent; stroke: none; }
+#topo path.hit { fill: none; stroke: transparent; stroke-width: 16; }
+#topo .t-dev:hover .hit, #topo .t-group:hover .hit { fill: var(--track); }
+#topo .fp { fill: var(--track); stroke: var(--control); stroke-width: .8; }
+#topo .fp.ok { fill: var(--ok); stroke: var(--ok); }
+#topo .fp.off { stroke-dasharray: 2 1.5; opacity: .6; }
+#topo .fp.up { stroke: var(--accent); stroke-width: 1.4; }
+#topo .kicon { color: var(--fg); }
+#topo .kicon.ghost { opacity: .35; }
+#topo .wire { fill: none; stroke: var(--control); stroke-width: 1.5; }
+#topo .wire.bus, #topo .wire.sub { stroke: var(--line); stroke-width: 2; }
+#topo .t-link .wire { stroke-width: 2; }
+#topo .t-link.warn .wire { stroke: var(--warn); }
+#topo .t-link.bad .wire { stroke: var(--bad); stroke-dasharray: 6 5; }
+#topo .t-link.standby .wire { stroke-dasharray: 6 5; }
+#topo .t-link:hover .wire { stroke: var(--accent); }
+/* traffic: thicker and faster as it grows (l0 idle .. l4 over 1 Gb/s); orange = sent by the switch (as ↑), rev sky = received */
+#topo .flow { fill: none; stroke: var(--tx); stroke-linecap: round; stroke-dasharray: 1 11; stroke-width: 0; animation: topo-flow 2s linear infinite; }
+#topo .flow.l1 { stroke-width: 2.5; animation-duration: 3s; }
+#topo .flow.l2 { stroke-width: 3.5; animation-duration: 1.8s; }
+#topo .flow.l3 { stroke-width: 5; animation-duration: 1.1s; }
+#topo .flow.l4 { stroke-width: 7; animation-duration: .6s; }
+#topo .flow.rev { animation-direction: reverse; stroke: var(--rx); }
+#topo .flow.l0, #topo .flow.down { stroke-width: 0; animation: none; }
+@keyframes topo-flow { to { stroke-dashoffset: -24; } }
+@media (prefers-reduced-motion: reduce) { #topo .flow { animation: none; stroke-dasharray: none; opacity: .5; } }
+.pill.standby { background: var(--track); color: var(--muted); }

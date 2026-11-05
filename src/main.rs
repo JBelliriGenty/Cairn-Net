@@ -15,6 +15,8 @@
 //! mode (src/direct.rs), the switch itself, written through the API with the
 //! write account.
 //!
+//! Firewall (src/firewall.rs): filter, NAT, mangle, raw, lists, read only.
+//!
 //! Without such a proxy, "login" in the configuration turns on the built-in
 //! sign-in (src/login.rs, HTTPS required: "tls" with cert and key files).
 //!
@@ -24,11 +26,14 @@
 mod dhcp;
 mod direct;
 mod dns;
+mod firewall;
 mod git;
 mod infra;
 mod login;
 mod servers;
 mod settings;
+mod statics;
+mod topo;
 
 use openssl::hash::MessageDigest;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -45,6 +50,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 const INDEX: &str = include_str!("../www/index.html");
 const JS: &str = include_str!("../www/panel.js");
+const TOPO_JS: &str = include_str!("../www/topo.js");
 const CSS: &str = include_str!("../www/panel.css");
 const ICON: &str = include_str!("../www/icon.svg");
 const I18N: &str = include_str!("../www/i18n.js");
@@ -58,7 +64,30 @@ struct Config {
     login: Option<login::Login>,
     tls: Option<(String, String)>, // PEM certificate and key files
     dhcp: Option<Dhcp>,
+    notify: Option<Notify>,
     public: Value, // what /api/config returns
+}
+
+/// Where alerts go: an HTTP endpoint taking the message as body (ntfy topic
+/// URL…), with optional headers read from a file (curl -H @file).
+struct Notify {
+    url: String,
+    headers_file: String,
+}
+
+impl Notify {
+    fn send(&self, title: &str, msg: &str) {
+        let mut c = Command::new("curl");
+        c.args(["-fsS", "-m", "10", "-o", "/dev/null", "-H", &format!("Title: {title}"), "--data-binary", msg]);
+        if !self.headers_file.is_empty() {
+            c.arg("-H").arg(format!("@{}", self.headers_file));
+        }
+        match c.arg("--").arg(&self.url).output() {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => eprintln!("notify: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => eprintln!("notify: curl: {e}"),
+        }
+    }
 }
 
 /// Where the reservations live and which switch serves them.
@@ -93,6 +122,7 @@ impl Config {
         let data = s("data_dir", "/var/lib/cairn-net");
         settings::init(&format!("{data}/settings.json"), seed);
         git::init(&data);
+        topo::init(&data);
         let mut public = json!({});
         for k in ["title", "subtitle", "lang"] {
             public[k] = v[k].clone();
@@ -128,6 +158,10 @@ impl Config {
             login,
             tls,
             dhcp,
+            notify: v["notify"]["url"].as_str().map(|u| Notify {
+                url: u.to_string(),
+                headers_file: v["notify"]["headers_file"].as_str().unwrap_or("").to_string(),
+            }),
             public,
         }
     }
@@ -316,7 +350,7 @@ fn slow_one(api: &mut Api) -> Result<Value, String> {
         "ports": print(api, "/interface/bridge/port", "interface,pvid,status,role,edge-port,forwarding,comment", &[])?,
         "vlans": print(api, "/interface/bridge/vlan", "vlan-ids,current-tagged,current-untagged,comment,dynamic", &[])?,
         "bonds": print(api, "/interface/bonding", "name,slaves,mode,running,comment", &[])?,
-        "neighbors": print(api, "/ip/neighbor", "interface,identity,address,mac-address,board,platform,interface-name", &[])?,
+        "neighbors": print(api, "/ip/neighbor", "interface,identity,address,mac-address,board,platform,interface-name,system-caps,system-caps-enabled", &[])?,
         "hosts": print(api, "/interface/bridge/host", "mac-address,on-interface,vid", &["?local=false"])?,
         "leases": print(api, "/ip/dhcp-server/lease", "address,mac-address,host-name,comment,status,server,dynamic,last-seen,expires-after", &[])?,
         "dhcp_servers": print(api, "/ip/dhcp-server", "name,disabled,invalid,address-pool,interface,lease-time,authoritative,comment", &[])?,
@@ -399,7 +433,9 @@ fn slow() -> String {
                 ips.extend(s[k].as_array().into_iter().flatten().filter_map(|r| r["address"].as_str().map(String::from)));
             }
         }
-        json!({"switches": switches, "arp": arp, "names": names(&ips)}).to_string()
+        let names = names(&ips);
+        let topology = topo::build(&switches, &arp, &names);
+        json!({"switches": switches, "arp": arp, "names": names, "topology": topology}).to_string()
     })
 }
 
@@ -420,7 +456,7 @@ fn source<'a>(cfg: &'a Config, name: &str) -> Result<Src<'a>, String> {
         return Ok(Src::Direct(sw));
     }
     let d = cfg.dhcp.as_ref().filter(|d| d.switch == name);
-    if sw.cfg.mode == "git" && !sw.cfg.git_url.is_empty() {
+    if sw.cfg.mode == "git" && !sw.cfg.git_url.is_empty() && !sw.cfg.git_path.is_empty() {
         return Ok(Src::Git(sw, d));
     }
     match &cfg.dhcp {
@@ -435,7 +471,7 @@ fn dhcp_targets(cfg: &Config) -> Value {
     for s in settings::all() {
         let c = &s.cfg;
         match &cfg.dhcp {
-            _ if c.mode == "direct" || (c.mode == "git" && !c.git_url.is_empty() && cfg.dhcp.as_ref().is_none_or(|d| d.switch != c.name)) =>
+            _ if c.mode == "direct" || (c.mode == "git" && !c.git_url.is_empty() && !c.git_path.is_empty() && cfg.dhcp.as_ref().is_none_or(|d| d.switch != c.name)) =>
                 out.push(json!({"switch": c.name, "mode": c.mode, "server": "", "network": ""})),
             Some(d) if d.switch == c.name => out.push(json!({"switch": d.switch, "mode": c.mode, "server": d.server, "network": d.network})),
             _ => {}
@@ -448,7 +484,7 @@ fn dhcp_targets(cfg: &Config) -> Value {
 fn current(src: &Src) -> Result<(String, Option<direct::Live>), String> {
     match src {
         Src::File(d) => Ok((fs::read_to_string(&d.file).unwrap_or_default(), None)),
-        Src::Git(sw, _) => Ok((git::read(&sw.cfg)?, None)),
+        Src::Git(sw, _) => Ok((git::read(&sw.cfg, &sw.cfg.git_path)?, None)),
         Src::Direct(sw) => {
             let l = with_api(sw, direct::read)?;
             Ok((direct::to_text(&l), Some(l)))
@@ -499,6 +535,7 @@ fn dhcp_view(src: &Src) -> Value {
         "names": names.into_iter().map(|(ip, n)| json!([ip, n])).collect::<Vec<_>>(),
         "dns": dns_cfg.map(|c| json!({"kind": c.dns, "targets": c.dns_targets, "servers": c.dns_servers, "status": dns::status(&name)})),
         "router_error": err,
+        "static": settings::get(&name).and_then(|sw| static_view(&sw.cfg)),
         // git mode: the commit needs the deploy key added with write access
         "can_apply": matches!(src, Src::Direct(_) | Src::Git(..)),
     })
@@ -529,12 +566,12 @@ fn dhcp_apply(src: &Src, a: &Value, user: &str, author: &str) -> Value {
     if let Src::Git(sw, _) = src {
         let n = changes(a).len();
         let msg = format!("dhcp ({}): {n} change{} from Cairn Net", sw.cfg.git_path, if n > 1 { "s" } else { "" });
-        let r = git::commit(&sw.cfg, author, &msg, |text| {
+        let r = git::commit(&sw.cfg, &sw.cfg.git_path, author, &msg, |text| {
             let new = dhcp::apply(text, changes(a))?;
             let p = problems(src, &new);
             if p.is_empty() { Ok(new) } else { Err(p.join(" · ")) }
         });
-        eprintln!("dhcp committed for {} by {user}: {}", sw.cfg.name, r.as_ref().map_or_else(|e| format!("error: {e}"), |c| c.clone()));
+        eprintln!("dhcp committed for {} by {user}: {}", sw.cfg.name, r.as_ref().map_or_else(|e| format!("error: {e}"), |c| c.clone().unwrap_or("nothing to change".into())));
         return match r {
             Ok(c) => json!({"ok": true, "commit": c}),
             Err(e) => json!({"ok": false, "error": e}),
@@ -571,6 +608,75 @@ fn dhcp_apply(src: &Src, a: &Value, user: &str, author: &str) -> Value {
     res.unwrap_or_else(|e| json!({"ok": false, "error": e}))
 }
 
+/* ---------- Static DNS names (src/statics.rs) ---------- */
+
+fn static_cfg(name: &str) -> Result<SwitchCfg, String> {
+    let sw = settings::get(name).ok_or_else(|| format!("{name}: unknown switch"))?;
+    let c = sw.cfg.clone();
+    if c.mode == "git" && !c.git_url.is_empty() && !c.git_dns_path.is_empty() { Ok(c) } else { Err(format!("{name}: no static DNS names file (git mode)")) }
+}
+
+/// Names a static entry must not take: the DHCP reservations of the switch's
+/// file and the names its leases publish.
+fn taken_names(c: &SwitchCfg) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    if !c.git_path.is_empty() {
+        let text = git::read(c, &c.git_path).unwrap_or_default();
+        out.extend(dhcp::parse(&text).into_iter().map(|e| (e.name.to_lowercase(), format!("the DHCP reservation of {}", e.mac))));
+    }
+    let s: Value = serde_json::from_str(&slow()).unwrap_or(Value::Null);
+    let router = s["switches"].as_array().into_iter().flatten().find(|x| x["name"] == c.name.as_str()).cloned().unwrap_or(Value::Null);
+    let servers = if c.dns == "none" { vec![] } else { c.dns_servers.clone() };
+    out.extend(dns::names(&router, &servers).into_iter().map(|(ip, n, _)| (n, format!("a lease ({ip})"))));
+    out
+}
+
+fn static_view(c: &SwitchCfg) -> Option<Value> {
+    let c = static_cfg(&c.name).ok()?;
+    let (text, err) = match git::read(&c, &c.git_dns_path) {
+        Ok(t) => (t, Value::Null),
+        Err(e) => (String::new(), json!(e)),
+    };
+    let entries = statics::parse(&text);
+    // what the DNS servers of the hosts integration answer (plain queries, no account)
+    let servers: Vec<String> = if c.dns == "hosts" {
+        c.dns_targets.iter().map(|t| {
+            let h = t.rsplit_once('@').map_or(t.as_str(), |x| x.1);
+            h.split(':').next().unwrap_or(h).to_string()
+        }).collect()
+    } else {
+        vec![]
+    };
+    Some(json!({
+        "path": c.git_dns_path, "error": err,
+        "entries": entries.iter().map(statics::to_json).collect::<Vec<_>>(),
+        "problems": statics::check(&entries, &taken_names(&c)),
+        "served": statics::served_all(&servers, &entries),
+    }))
+}
+
+fn static_preview(a: &Value) -> Result<Value, String> {
+    let c = static_cfg(a["switch"].as_str().unwrap_or(""))?;
+    let text = git::read(&c, &c.git_dns_path)?;
+    let new = statics::apply(&text, changes(a))?;
+    let problems = statics::check(&statics::parse(&new), &taken_names(&c));
+    Ok(json!({"ok": true, "old": text, "new": new, "problems": problems}))
+}
+
+fn static_apply(a: &Value, user: &str, author: &str) -> Result<Value, String> {
+    let c = static_cfg(a["switch"].as_str().unwrap_or(""))?;
+    let taken = taken_names(&c);
+    let n = changes(a).len();
+    let msg = format!("dns ({}): {n} change{} from Cairn Net", c.git_dns_path, if n > 1 { "s" } else { "" });
+    let r = git::commit(&c, &c.git_dns_path, author, &msg, |text| {
+        let new = statics::apply(text, changes(a))?;
+        let p = statics::check(&statics::parse(&new), &taken);
+        if p.is_empty() { Ok(new) } else { Err(p.join(" · ")) }
+    });
+    eprintln!("dns names committed for {} by {user}: {}", c.name, r.as_ref().map_or_else(|e| format!("error: {e}"), |x| x.clone().unwrap_or("nothing to change".into())));
+    r.map(|x| json!({"ok": true, "commit": x}))
+}
+
 /* ---------- Infrastructure (src/infra.rs) ---------- */
 
 fn infra_view(name: &str) -> Value {
@@ -586,6 +692,36 @@ fn infra_view(name: &str) -> Value {
     if v["error"].is_null() {
         // outside with_api: not holding the switch's connection while fetching
         v["newest"] = json!(infra::newest(v["update"]["channel"].as_str().unwrap_or("stable")));
+    }
+    v["name"] = json!(sw.cfg.name);
+    v["mode"] = json!(sw.cfg.mode);
+    v["rollback_s"] = json!(infra::ROLLBACK_S);
+    v
+}
+
+/// Firewall page: every switch, read account (src/firewall.rs).
+fn firewall_view(name: &str) -> Value {
+    let Some(sw) = settings::get(name) else { return json!({"error": format!("{name}: unknown switch")}) };
+    let mut v = with_api(&sw, |api| {
+        let mut v = firewall::read(api)?;
+        v["rollback"] = json!(print(api, "/system/scheduler", "name,next-run", &[&format!("?name={}", infra::ROLLBACK)])?.pop());
+        if let Ok(p) = path_of(&sw.cfg, api) {
+            v["app_iface"] = json!(p.app.and_then(|a| firewall::app_iface(&v, a)));
+            v["app"] = json!(p.app.map(|a| a.to_string()));
+        }
+        Ok(v)
+    }).unwrap_or_else(|e| json!({"error": e}));
+    if fw_git(&sw.cfg) {
+        v["git"] = json!({"url": sw.cfg.git_url, "branch": sw.cfg.git_branch, "path": sw.cfg.git_fw_path});
+        match fw_file(&sw.cfg) {
+            Ok(f) => {
+                if v["error"].is_null() {
+                    v["drift"] = json!(firewall::drift(&v, &f));
+                }
+                v["file"] = json!(f);
+            }
+            Err(e) => v["file_error"] = json!(e),
+        }
     }
     v["name"] = json!(sw.cfg.name);
     v["mode"] = json!(sw.cfg.mode);
@@ -625,16 +761,14 @@ fn rollback_left(api: &mut Api) -> Result<bool, String> {
 /// Rollback armed, commands run, then a new connection reads the switch back;
 /// if it reads as asked, the rollback countdown starts again from now (the
 /// page has ROLLBACK_S seconds to confirm). Otherwise the rollback stays armed.
-fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
-    let sw = direct_switch(v)?;
-    let c = &sw.cfg;
-    let w = infra::Want::from_json(&v["want"]);
+/// Shared by the Infrastructure and Firewall pages: one change waits at a time.
+fn guarded_apply(c: &SwitchCfg, user: &str, what: &str, plan: impl FnOnce(&mut Api) -> Result<(Vec<direct::Cmd>, Vec<String>), String>,
+    verify: impl FnOnce(&mut Api) -> Result<bool, String>) -> Result<Value, String> {
     let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
     if rollback_left(&mut api)? {
         return Err("a change is still waiting for its confirmation: confirm it or wait for the rollback".into());
     }
-    let path = path_of(c, &api)?;
-    let (cmds, undo) = infra::plan(&infra::read(&mut api)?, &w, &path)?;
+    let (cmds, undo) = plan(&mut api)?;
     if cmds.is_empty() {
         return Ok(json!({"ok": true, "commands": [], "pending": false}));
     }
@@ -647,8 +781,7 @@ fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
     forget_cache();
     // a new connection: the switch must still be reachable the way Cairn Net reaches it
     let back = Api::connect(c, &c.write_user, &c.write_password).and_then(|mut a| {
-        let live = infra::read(&mut a)?;
-        let ok = infra::matches(&live, &w);
+        let ok = verify(&mut a)?;
         if ok {
             let clock = print(&mut a, "/system/clock", "date,time", &[])?.pop().unwrap_or_default();
             a.call(&["/system/scheduler/set", &format!("=numbers={}", infra::ROLLBACK), &format!("=start-date={}", clock["date"].as_str().unwrap_or("")),
@@ -657,10 +790,181 @@ fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
         Ok(ok)
     });
     let verified = matches!(back, Ok(true));
-    eprintln!("infra applied on {} by {user}: {done}/{} commands{}, read back: {}", c.name, cmds.len(),
+    eprintln!("{what} applied on {} by {user}: {done}/{} commands{}, read back: {}", c.name, cmds.len(),
         err.as_ref().map_or(String::new(), |e| format!(", error: {e}")), back.as_ref().map_or_else(|e| format!("error: {e}"), |ok| if *ok { "as asked".into() } else { "differs".into() }));
     Ok(json!({"ok": err.is_none() && verified, "done": done, "commands": infra::show_all(&cmds), "error": err.or(back.err()),
         "verified": verified, "pending": true, "rollback_s": infra::ROLLBACK_S}))
+}
+
+fn infra_apply(v: &Value, user: &str) -> Result<Value, String> {
+    let sw = direct_switch(v)?;
+    let c = &sw.cfg;
+    let w = infra::Want::from_json(&v["want"]);
+    guarded_apply(c, user, "infra", |api| {
+        let path = path_of(c, api)?;
+        infra::plan(&infra::read(api)?, &w, &path)
+    }, |api| Ok(infra::matches(&infra::read(api)?, &w)))
+}
+
+/// Git mode for the firewall: a repository and a firewall file in it.
+fn fw_git(c: &SwitchCfg) -> bool {
+    c.mode == "git" && !c.git_url.is_empty() && !c.git_fw_path.is_empty()
+}
+
+/// The firewall can be written: direct mode, or git mode with a firewall file.
+fn fw_switch(v: &Value) -> Result<Arc<Switch>, String> {
+    let name = v["switch"].as_str().unwrap_or("");
+    let sw = settings::get(name).ok_or_else(|| format!("{name}: unknown switch"))?;
+    if sw.cfg.mode != "direct" && !fw_git(&sw.cfg) {
+        return Err(format!("{name}: the firewall is read-only (direct mode, or git mode with a firewall file, writes it)"));
+    }
+    Ok(sw)
+}
+
+/// The repository's firewall file (missing: empty, nothing managed yet).
+fn fw_file(c: &SwitchCfg) -> Result<firewall::File, String> {
+    let text = match git::read(c, &c.git_fw_path) {
+        Err(e) if e.contains("No such file") => String::new(),
+        r => r?,
+    };
+    firewall::parse_file(&text).map_err(|e| format!("{}: {e}", c.git_fw_path))
+}
+
+/// Commits `rows` as the table of the firewall file (None: already so).
+fn fw_commit(c: &SwitchCfg, author: &str, table: &str, rows: Vec<firewall::Row>, msg: &str) -> Result<Option<String>, String> {
+    git::commit(c, &c.git_fw_path, author, msg, |text| {
+        let mut f = firewall::parse_file(text).map_err(|e| format!("{}: {e}", c.git_fw_path))?;
+        if f.get(table) == Some(&rows) {
+            return Ok(text.to_string());
+        }
+        f.insert(table.to_string(), rows);
+        Ok(firewall::file_text(&f))
+    })
+}
+
+// git mode: the table applied and waiting for "Keep", committed then
+static FW_PENDING: Mutex<BTreeMap<String, (String, Vec<firewall::Row>)>> = Mutex::new(BTreeMap::new());
+
+/// The firewall of one table as the page wants it (src/firewall.rs). In git
+/// mode the page sends the file's rows: they take the ids of the same rows
+/// on the switch.
+fn firewall_plan(c: &SwitchCfg, api: &mut Api, w: &firewall::Want) -> Result<(Vec<direct::Cmd>, Vec<String>, bool), String> {
+    let path = path_of(c, api)?;
+    let live = firewall::read(api)?;
+    if fw_git(c) {
+        let rows: Vec<firewall::Row> = w.rows.iter().map(|(_, r)| r.clone()).collect();
+        return firewall::plan(&live, &firewall::want_of(&live, &w.table, &rows, w.ack_conntrack), &path, c.port);
+    }
+    firewall::plan(&live, w, &path, c.port)
+}
+
+fn firewall_preview(v: &Value) -> Result<Value, String> {
+    let sw = fw_switch(v)?;
+    let w = firewall::Want::from_json(v)?;
+    let (cmds, undo, conntrack) = with_api(&sw, |api| firewall_plan(&sw.cfg, api, &w))?;
+    Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S, "conntrack": conntrack}))
+}
+
+fn firewall_apply(v: &Value, user: &str, author: &str) -> Result<Value, String> {
+    let sw = fw_switch(v)?;
+    let c = &sw.cfg;
+    let w = firewall::Want::from_json(v)?;
+    if fw_git(c) && c.write_user.is_empty() {
+        return Err("applying needs the write account (Settings)".into());
+    }
+    let mut out = guarded_apply(c, user, &format!("firewall {}", w.table), |api| {
+        let (cmds, undo, conntrack) = firewall_plan(c, api, &w)?;
+        if conntrack && !w.ack_conntrack {
+            return Err("this change starts connection tracking: confirm it in the preview".into());
+        }
+        Ok((cmds, undo))
+    }, |api| Ok(firewall::matches(&firewall::read(api)?, &w)))?;
+    if fw_git(c) {
+        let rows: Vec<firewall::Row> = w.rows.into_iter().map(|(_, r)| r).collect();
+        if out["pending"] == true {
+            FW_PENDING.lock().unwrap_or_else(|e| e.into_inner()).insert(c.name.clone(), (w.table, rows));
+        } else {
+            // the switch already runs it: only the file follows
+            let msg = format!("firewall ({}): {} from Cairn Net", c.git_fw_path, w.table);
+            out["commit"] = json!(fw_commit(c, author, &w.table, rows, &msg)?);
+        }
+    }
+    Ok(out)
+}
+
+/// "Keep": the rollback goes; in git mode the kept table is then committed.
+fn firewall_confirm(v: &Value, user: &str, author: &str) -> Result<Value, String> {
+    let sw = fw_switch(v)?;
+    let c = &sw.cfg;
+    let pending = FW_PENDING.lock().unwrap_or_else(|e| e.into_inner()).remove(&c.name);
+    let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
+    if !rollback_left(&mut api)? {
+        return Err("no change waiting: the switch already put the old settings back".into());
+    }
+    api.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)])?;
+    eprintln!("firewall confirmed on {} by {user}", c.name);
+    forget_cache();
+    let mut out = json!({"ok": true});
+    if let Some((table, rows)) = pending.filter(|_| fw_git(c)) {
+        let msg = format!("firewall ({}): {table} from Cairn Net", c.git_fw_path);
+        match fw_commit(c, author, &table, rows, &msg) {
+            Ok(sha) => out["commit"] = json!(sha),
+            Err(e) => {
+                eprintln!("firewall commit for {} failed: {e}", c.name);
+                out["commit_error"] = json!(e);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Git mode: the file takes every table as the switch runs it (read account).
+fn firewall_import(v: &Value, user: &str, author: &str) -> Result<Value, String> {
+    let sw = fw_switch(v)?;
+    let c = &sw.cfg;
+    if !fw_git(c) {
+        return Err(format!("{}: not in git mode with a firewall file", c.name));
+    }
+    let (live, waiting) = with_api(&sw, |api| Ok((firewall::read(api)?, rollback_left(api)?)))?;
+    if waiting {
+        return Err("a change is still waiting for its confirmation: import once it is kept or rolled back".into());
+    }
+    let f = firewall::to_file(&live);
+    let msg = format!("firewall ({}): rules of {} imported by Cairn Net", c.git_fw_path, c.name);
+    let sha = git::commit(c, &c.git_fw_path, author, &msg, |text| {
+        Ok(if firewall::parse_file(text).ok().as_ref() == Some(&f) { text.to_string() } else { firewall::file_text(&f) })
+    })?;
+    eprintln!("firewall of {} imported by {user}: {}", c.name, sha.as_deref().unwrap_or("nothing to change"));
+    Ok(json!({"ok": true, "commit": sha}))
+}
+
+/// Every 10 minutes: git-mode firewalls that differ from their file (not
+/// while a change waits for its confirmation), notified when that changes.
+fn drift_watch(notify: Option<&'static Notify>) {
+    std::thread::spawn(move || {
+        let mut last: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        loop {
+            std::thread::sleep(Duration::from_secs(600));
+            for sw in settings::all().into_iter().filter(|s| fw_git(&s.cfg)) {
+                let name = sw.cfg.name.clone();
+                let Ok((live, false)) = with_api(&sw, |api| Ok((firewall::read(api)?, rollback_left(api)?))) else { continue };
+                let Ok(f) = fw_file(&sw.cfg) else { continue };
+                let d = firewall::drift(&live, &f);
+                if last.insert(name.clone(), d.clone()).unwrap_or_default() == d {
+                    continue;
+                }
+                let msg = if d.is_empty() {
+                    format!("{name}: the firewall is back in line with {}.", sw.cfg.git_fw_path)
+                } else {
+                    format!("{name}: the firewall differs from {} ({}). Apply the file or import the switch's rules (Cairn Net, Firewall).", sw.cfg.git_fw_path, d.join(", "))
+                };
+                eprintln!("drift: {msg}");
+                if let Some(n) = notify {
+                    n.send("Cairn Net: firewall drift", &msg);
+                }
+            }
+        }
+    });
 }
 
 /// The page still reaches the switch (new connection): the rollback goes.
@@ -780,6 +1084,7 @@ fn handle(cfg: &'static Config, mut r: Request) {
         match (r.method().clone(), path.as_str()) {
             (Method::Get, "/") => return respond(r, 200, INDEX.into(), "text/html"),
             (Method::Get, "/panel.js") => return respond(r, 200, JS.into(), "text/javascript"),
+            (Method::Get, "/topo.js") => return respond(r, 200, TOPO_JS.into(), "text/javascript"),
             (Method::Get, "/panel.css") => return respond(r, 200, CSS.into(), "text/css"),
             (Method::Get, "/i18n.js") => return respond(r, 200, I18N.into(), "text/javascript"),
             (Method::Post, "/api/login") => {
@@ -818,23 +1123,38 @@ fn handle(cfg: &'static Config, mut r: Request) {
         let mut body = String::new();
         let _ = r.as_reader().take(65536).read_to_string(&mut body);
         let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        // commit author: what the authenticating proxy says (e.g. Authelia: Remote-Name,
+        // Remote-Email); with the built-in sign-in these headers come from the browser
+        let author = || {
+            let proxied = |h: &str| if cfg.login.is_some() { String::new() } else { header(&r, h) };
+            let name = Some(proxied("Remote-Name")).filter(|n| !n.is_empty() && !n.contains(['<', '>', '\n'])).unwrap_or_else(|| user.clone());
+            let mail = Some(proxied("Remote-Email")).filter(|m| m.contains('@') && !m.contains(['<', '>', ' ', '\n'])).unwrap_or_else(|| format!("{user}@cairn-net"));
+            format!("{name} <{mail}>")
+        };
         let out = match path.as_str() {
             "/api/dhcp/preview" | "/api/dhcp/apply" => match source(cfg, v["switch"].as_str().unwrap_or("")) {
-                Ok(src) if path == "/api/dhcp/apply" => {
-                    // commit author: what the authenticating proxy says (e.g. Authelia: Remote-Name,
-                    // Remote-Email); with the built-in sign-in these headers come from the browser
-                    let proxied = |h: &str| if cfg.login.is_some() { String::new() } else { header(&r, h) };
-                    let name = Some(proxied("Remote-Name")).filter(|n| !n.is_empty() && !n.contains(['<', '>', '\n'])).unwrap_or_else(|| user.clone());
-                    let mail = Some(proxied("Remote-Email")).filter(|m| m.contains('@') && !m.contains(['<', '>', ' ', '\n'])).unwrap_or_else(|| format!("{user}@cairn-net"));
-                    dhcp_apply(&src, &v, &user, &format!("{name} <{mail}>"))
-                }
+                Ok(src) if path == "/api/dhcp/apply" => dhcp_apply(&src, &v, &user, &author()),
                 Ok(src) => dhcp_preview(&src, &v),
                 Err(e) => json!({"ok": false, "error": e}),
             },
+            "/api/dns-static/preview" => static_preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/dns-static/apply" => static_apply(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/preview" => infra_preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/apply" => infra_apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/firewall/preview" => firewall_preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/firewall/apply" => firewall_apply(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/firewall/confirm" => firewall_confirm(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/firewall/import" => firewall_import(&v, &user, &author()).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/confirm" => infra_confirm(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/settings/probe" => probe(&v),
+            // the app's own data, nothing is written to the switches
+            "/api/kinds" => match topo::set_label(&v) {
+                Ok(()) => {
+                    forget_cache(); // the next /api/slow carries the new name and kind
+                    json!({"ok": true, "kinds": topo::kinds()})
+                }
+                Err(e) => json!({"ok": false, "error": e}),
+            },
             "/api/settings" => match settings::apply(&v) {
                 Ok(()) => {
                     forget_cache();
@@ -853,6 +1173,8 @@ fn handle(cfg: &'static Config, mut r: Request) {
     match path.as_str() {
         "/" => respond(r, 200, INDEX.into(), "text/html"),
         "/panel.js" => respond(r, 200, JS.into(), "text/javascript"),
+        "/topo.js" => respond(r, 200, TOPO_JS.into(), "text/javascript"),
+        "/api/kinds" => respond(r, 200, json!({"kinds": topo::kinds(), "all": topo::KINDS}).to_string(), "application/json"),
         "/panel.css" => respond(r, 200, CSS.into(), "text/css"),
         "/i18n.js" => respond(r, 200, I18N.into(), "text/javascript"),
         "/api/config" => {
@@ -870,6 +1192,10 @@ fn handle(cfg: &'static Config, mut r: Request) {
         "/api/infra" => {
             let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
             respond(r, 200, infra_view(&q).to_string(), "application/json")
+        }
+        "/api/firewall" => {
+            let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
+            respond(r, 200, firewall_view(&q).to_string(), "application/json")
         }
         "/api/dhcp" => {
             let q = r.url().split_once("?switch=").map_or(String::new(), |(_, n)| n.split('&').next().unwrap_or("").to_string());
@@ -903,6 +1229,7 @@ fn main() {
     }
     .expect("cannot listen");
     eprintln!("cairn-net listening on {}", cfg.listen);
+    drift_watch(cfg.notify.as_ref());
     // DNS integrations: every 2 minutes, from the shared read of the switches
     std::thread::spawn(|| loop {
         std::thread::sleep(Duration::from_secs(20));

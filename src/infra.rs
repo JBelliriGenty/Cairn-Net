@@ -85,7 +85,7 @@ fn yes(v: &Value, k: &str) -> bool {
 }
 
 /// A RouterOS script string literal.
-fn q(v: &str) -> String {
+pub fn q(v: &str) -> String {
     let mut o = String::from("\"");
     for c in v.chars() {
         if matches!(c, '\\' | '"' | '$') {
@@ -97,7 +97,7 @@ fn q(v: &str) -> String {
 }
 
 /// "a.b.c.d/len" -> (address, network, len)
-fn cidr(v: &str) -> Option<(Ipv4Addr, u32, u32)> {
+pub fn cidr(v: &str) -> Option<(Ipv4Addr, u32, u32)> {
     let (a, l) = v.split_once('/')?;
     let ip: Ipv4Addr = a.parse().ok()?;
     let len: u32 = l.parse().ok().filter(|l| (1..=32).contains(l))?;
@@ -236,12 +236,16 @@ pub fn plan(live: &Value, w: &Want, path: &Path) -> Result<(Vec<Cmd>, Vec<String
     }
 
     if !undo.is_empty() {
-        // undo in reverse order, then the scheduler goes
-        undo.reverse();
-        undo.push(format!(":log warning {}", q("cairn-net: change not confirmed, rolled back")));
-        undo.push(format!("/system scheduler remove [find name={}]", q(ROLLBACK)));
+        undo.reverse(); // undo in reverse order
+        finish(&mut undo);
     }
     Ok((cmds, undo))
+}
+
+/// The end of every rollback script: a log line, then the scheduler goes.
+pub fn finish(undo: &mut Vec<String>) {
+    undo.push(format!(":log warning {}", q("cairn-net: change not confirmed, rolled back")));
+    undo.push(format!("/system scheduler remove [find name={}]", q(ROLLBACK)));
 }
 
 /// The scheduler that runs `undo` after ROLLBACK_S seconds.

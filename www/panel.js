@@ -8,7 +8,7 @@ const FAST_MS = 3000;   // resources, health, interface counters
 const SLOW_MS = 20000;  // links, VLANs, neighbours, MAC tables, leases
 const HIST = 60;        // sparkline points (3 min at 3 s)
 const ENTER_MS = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 650;
-const VIEWS = { overview: "Overview", ports: "Ports", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", infra: "Infrastructure", settings: "Settings" };
+const VIEWS = { overview: "Overview", topology: "Topology", ports: "Ports", clients: "Devices", dhcp: "DHCP", vlans: "VLANs", infra: "Infrastructure", firewall: "Firewall", settings: "Settings" };
 
 let CFG = { switches: [] };
 let D = null, CHANGES = [], PREVIEW = null; // /api/dhcp, pending reservation changes, their preview
@@ -169,7 +169,7 @@ function model() {
       return {
         name: i.name, comment: i.comment, running: yes(i.running), disabled: yes(i.disabled), linkDowns: num(i["link-downs"]),
         rate: (mon[i.name] || {}).rate, mon: mon[i.name] || {}, bond: bondOf[i.name], uplink: uplinks.has(i.name) || uplinks.has(via),
-        pvid: bp && bp.pvid, tagged: vlans.filter(v => v.tagged.includes(via)).map(v => v.ids), neighbor: neighborOf[i.name],
+        pvid: bp && bp.pvid, fwd: bp && bp.forwarding, role: bp && bp.role, tagged: vlans.filter(v => v.tagged.includes(via)).map(v => v.ids), neighbor: neighborOf[i.name],
         rx: (rates[c.name + "|" + i.name] || {}).rx || 0, tx: (rates[c.name + "|" + i.name] || {}).tx || 0,
       };
     });
@@ -198,34 +198,9 @@ function issuesOf(sw) {
   return out;
 }
 
-// MAC -> {ip, name}, from leases, the switches' ARP tables and this host's own.
-function identities(sws) {
-  const ipOf = {}, nameOf = {};
-  for (const [ip, mac] of S.arp || []) ipOf[mac] = ip;
-  for (const sw of sws) for (const a of sw.arp) if (a["mac-address"]) ipOf[a["mac-address"]] = a.address;
-  for (const sw of sws) for (const l of sw.leases) {
-    const mac = l["mac-address"];
-    if (!mac) continue;
-    if (l.status === "bound" || !ipOf[mac]) ipOf[mac] = l.address;
-    const n = l["host-name"] || String(l.comment || "").replace(/^ansible:\s*/, "");
-    if (n) nameOf[mac] = n;
-  }
-  return mac => { const ip = ipOf[mac]; return { ip, name: nameOf[mac] || (ip && S.names[ip]) || "" }; };
-}
-
-// Each MAC where it is plugged: the entry that is not on an inter-switch link.
-function devices(sws) {
-  const who = identities(sws), seen = new Map();
-  for (const sw of sws) for (const h of sw.hosts) {
-    const port = h["on-interface"];
-    if (!port || sw.uplinks.has(port)) continue;
-    const key = h["mac-address"] + "|" + sw.name + "|" + port;
-    const d = seen.get(key) || Object.assign({ mac: h["mac-address"], sw: sw.name, port, vids: [] }, who(h["mac-address"]));
-    if (h.vid && !d.vids.includes(h.vid)) d.vids.push(h.vid);
-    seen.set(key, d);
-  }
-  return [...seen.values()].sort((a, b) => natural(a.sw, b.sw) || natural(a.port, b.port) || natural(a.name || "~", b.name || "~"));
-}
+// Where each MAC is plugged, its IP, name and kind: worked out by the server
+// (src/topo.rs: MAC tables, LLDP / MNDP, leases, ARP, DNS), shared with the Topology view.
+const devices = () => (S && S.topology && S.topology.devices) || [];
 
 /* ---------- settings: the switches, their accounts and how each is managed ---------- */
 
@@ -254,7 +229,7 @@ function renderSettings() {
       '<p class="sub">' + esc(s.host + ":" + s.port) + "</p>" +
       '<p class="sub"><span class="dot ' + st[0] + '"></span> ' + esc(st[1]) + "</p>" +
       '<ul class="gives">' + acct("Read account", s.user, s.has_password) + acct("Write account", s.write_user, s.has_write_password) +
-      (s.mode === "git" && s.git_url ? '<li class="mono fp">' + esc(s.git_url + " · " + s.git_branch + " · " + s.git_path) + "</li>" : "") +
+      (s.mode === "git" && s.git_url ? '<li class="mono fp">' + esc([s.git_url, s.git_branch, s.git_path, s.git_fw_path, s.git_dns_path].filter(Boolean).join(" · ")) + "</li>" : "") +
       '<li class="mono fp" title="' + esc(t("Certificate fingerprint (sha256)")) + '">' + esc(s.sha256) + "</li></ul>" +
       '<div class="card-head foot"><span class="sub">' + esc(t(MODE_HELP[s.mode] || "")) + '</span><span class="actions"><button data-act="sw-edit" data-name="' + esc(s.name) + '">' +
       esc(t("Edit")) + '</button><button class="danger" data-act="sw-del" data-name="' + esc(s.name) + '">' + esc(t("Delete")) + "</button></span></div></article>";
@@ -275,7 +250,7 @@ async function settingsSaved(res) {
 }
 
 async function swForm(s, typed, err) {
-  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "", dns: "none", dns_targets: [], dns_servers: [] }, s || {}, typed || {});
+  const v = Object.assign({ name: "", host: "", port: 8729, user: "", write_user: "", mode: "read", url: "", ignore: [], sha256: "", git_url: "", git_branch: "main", git_path: "", git_fw_path: "", git_dns_path: "", dns: "none", dns_targets: [], dns_servers: [] }, s || {}, typed || {});
   const inp = (k, label, val, more = "") => "<label>" + esc(t(label)) + '<input name="' + k + '" value="' + esc(val) + '"' + more + "></label>";
   const pw = (k, label, has) => "<label>" + esc(t(label)) + '<input type="password" name="' + k + '" autocomplete="new-password"' +
     (has ? ' placeholder="' + esc(t("unchanged")) + '"' : "") + "></label>";
@@ -290,7 +265,9 @@ async function swForm(s, typed, err) {
     '<div class="cols2">' + inp("user", "Read account", v.user, " required") + pw("password", "Its password", s && s.has_password) +
       inp("write_user", "Write account (direct mode)", v.write_user) + pw("write_password", "Its password", s && s.has_write_password) + "</div>" +
     '<div class="cols2">' + inp("git_url", "Repository (git mode)", v.git_url, ' placeholder="ssh://git@git.example.com/network.git"') +
-      inp("git_path", "DHCP file in it", v.git_path, ' placeholder="network/dhcp.yml"') + inp("git_branch", "Branch", v.git_branch) + "</div>" +
+      inp("git_branch", "Branch", v.git_branch) + inp("git_path", "DHCP file in it", v.git_path, ' placeholder="network/dhcp.yml"') +
+      inp("git_fw_path", "Firewall file in it", v.git_fw_path, ' placeholder="network/firewall.json"') +
+      inp("git_dns_path", "Static DNS names file in it", v.git_dns_path, ' placeholder="network/dns.yml"') + "</div>" +
     "<label>" + esc(t("Publish the names of the leases (DNS)")) + '<select name="dns">' + Object.keys(DNS_LABEL).map(k => '<option value="' + k + '"' +
       (k === v.dns ? " selected" : "") + ">" + esc(t(DNS_LABEL[k])) + "</option>").join("") + "</select></label>" +
     '<div class="cols2">' + inp("dns_targets", "Hosts targets (user@host[:port], comma separated)", (v.dns_targets || []).join(", "), ' placeholder="root@192.168.88.2"') +
@@ -302,7 +279,7 @@ async function swForm(s, typed, err) {
   const g = k => String(fd.get(k) || "").trim();
   const sw = { name: g("name"), host: g("host"), port: +g("port") || 8729, url: g("url"), mode: g("mode"), user: g("user"), password: String(fd.get("password") || ""),
     write_user: g("write_user"), write_password: String(fd.get("write_password") || ""), ignore: g("ignore").split(/[\s,;]+/).filter(Boolean),
-    git_url: g("git_url"), git_branch: g("git_branch") || "main", git_path: g("git_path"),
+    git_url: g("git_url"), git_branch: g("git_branch") || "main", git_path: g("git_path"), git_fw_path: g("git_fw_path"), git_dns_path: g("git_dns_path"),
     dns: g("dns") || "none", dns_targets: g("dns_targets").split(/[\s,;]+/).filter(Boolean), dns_servers: g("dns_servers").split(/[\s,;]+/).filter(Boolean),
     sha256: s && s.host === g("host") && s.port === (+g("port") || 8729) ? s.sha256 : "" };
   const again = msg => swForm(s, sw, msg);
@@ -395,6 +372,7 @@ async function slowTick() {
     S = await get("/api/slow");
     if (CFG.dhcp) D = await get("/api/dhcp?switch=" + encodeURIComponent(CFG.dhcp.switch));
     if (VIEW === "infra") loadInfra();
+    if (VIEW === "firewall") loadFw();
     readOk(); render(true);
   } catch (e) { banner(t("Read failed: {err}", { err: e.message }), "read"); }
 }
@@ -409,10 +387,11 @@ function show(view) {
   document.querySelectorAll("#nav button").forEach(b => b.setAttribute("aria-current", b.dataset.view === view ? "page" : "false"));
   $("view-title").textContent = t(VIEWS[view]);
   VIEW = view;
-  const hash = view + ((view === "ports" || view === "infra") && SW ? "/" + encodeURIComponent(SW) : "");
+  const hash = view + (["ports", "infra", "firewall"].includes(view) && SW ? "/" + encodeURIComponent(SW) : "");
   if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash);
   if (view === "settings") loadSettings().catch(e => banner(e.message));
   if (view === "infra" && (!INF || INF.name !== SW)) { INF = null; loadInfra(); }
+  if (view === "firewall" && (!FW || FW.name !== SW)) { FW = null; FWE = null; loadFw(); }
   render(true);
   animUntil = Date.now() + ENTER_MS;
   clearTimeout(show.timer);
@@ -429,9 +408,11 @@ function render(force = false) {
   if (VIEW === "overview") renderOverview(sws);
   if (VIEW === "ports") renderPorts(sws);
   if (VIEW === "clients") renderClients(sws);
+  if (VIEW === "topology") renderTopo(sws);
   if (VIEW === "vlans") renderVlans(sws);
   if (VIEW === "dhcp") renderDhcp();
   if (VIEW === "infra") renderInfra();
+  if (VIEW === "firewall") renderFw();
   paint();
 }
 
@@ -452,28 +433,22 @@ function tile(view, title, value, lvl, extra) {
     esc(value) + "</strong>" + extra + "</button>";
 }
 
-// One entry per pair of switches seen by LLDP / MNDP (both ends report it: keep one).
+// Links between switches (src/topo.rs: LLDP / MNDP heard at both ends, not
+// through another switch), with their live state from this side's ports.
+// A redundant link held by STP is "standby", not a fault.
 function links(sws) {
-  const out = [], done = new Set();
-  for (const s of sws) {
-    const by = {};
-    for (const n of s.neighbors.filter(n => n.platform === "MikroTik")) {
-      const [port, bond] = list(n.interface);
-      const key = n.identity + "|" + (bond && bond !== "bridge" ? bond : port);
-      (by[key] = by[key] || { peer: n.identity, via: bond && bond !== "bridge" ? bond : port, ports: [] }).ports.push(port);
-    }
-    for (const l of Object.values(by)) {
-      const pair = [s.name, l.peer].sort().join("|");
-      if (done.has(pair)) continue;
-      done.add(pair);
-      const b = s.bonds.find(x => x.name === l.via);
-      const members = b ? b.slaves : l.ports;
-      const upn = members.filter(n => (s.ports.find(p => p.name === n) || {}).running).length;
-      const speed = members.map(n => (s.ports.find(p => p.name === n) || {}).rate).filter(Boolean);
-      out.push({ s, l, b, members, upn, speed, lv: upn === members.length ? "ok" : upn ? "warn" : "bad" });
-    }
-  }
-  return out;
+  return ((S && S.topology && S.topology.links) || []).map(L => {
+    const s = sws.find(x => x.name === L.a), o = sws.find(x => x.name === L.b);
+    if (!s || !o) return null;
+    const port = (w, n) => w.ports.find(p => p.name === n) || {};
+    const b = s.bonds.find(x => x.name === L.a_via);
+    const members = L.pairs.map(p => p[0]), remote = L.pairs.map(p => p[1]);
+    const upn = members.filter(n => port(s, n).running).length;
+    const speed = members.map(n => port(s, n).rate).filter(Boolean);
+    const blocked = upn > 0 && (members.every(n => port(s, n).fwd === "false") || remote.every(n => port(o, n).fwd === "false"));
+    return { s, o, L, l: { peer: L.b, via: L.a_via }, b, members, remote, upn, speed,
+      lv: blocked ? "standby" : upn === members.length ? "ok" : upn ? "warn" : "bad" };
+  }).filter(Boolean);
 }
 
 function renderOverview(sws) {
@@ -507,10 +482,10 @@ function renderOverview(sws) {
         t("up for {d}", { d: duration(rosSeconds(s.r.uptime)) })].filter(Boolean).join(" · ")) + "</p>");
   }).join("");
 
-  const rows = links(sws).map(({ s, l, b, members, upn, speed, lv }) =>
+  const rows = lk.map(({ s, l, b, members, remote, upn, speed, lv }) =>
       "<tr><td><b>" + esc(s.name) + "</b> ⇄ <b>" + esc(l.peer) + "</b></td><td>" + esc(b ? t("{bond} (LACP)", { bond: b.name }) : short(l.via)) +
-        "</td><td>" + esc(members.map(short).join(", ")) + "</td><td>" + esc(speed.length ? speed.length + " × " + speed[0] : "") +
-        '</td><td><span class="pill ' + lv + '">' + t("{up} / {total} up", { up: upn, total: members.length }) + "</span></td>" +
+        "</td><td>" + esc(members.map(short).join(", ") + " ⇄ " + remote.map(short).join(", ")) + "</td><td>" + esc(speed.length ? speed.length + " × " + speed[0] : "") +
+        '</td><td><span class="pill ' + lv + '">' + (lv === "standby" ? t("blocked by STP") : t("{up} / {total} up", { up: upn, total: members.length })) + "</span></td>" +
         '<td class="num">' + bits(members.reduce((a, n) => a + ((rates[s.name + "|" + n] || {}).rx || 0) + ((rates[s.name + "|" + n] || {}).tx || 0), 0)) + "</td></tr>");
 
   $("links").innerHTML = "<thead><tr><th>" + t("Link") + "</th><th>" + t("Via") + "</th><th>" + t("Ports") + "</th><th>" + t("Speed") + "</th><th>" +
@@ -608,15 +583,27 @@ function renderPorts(sws) {
 function renderClients(sws) {
   const q = $("q").value.trim().toLowerCase();
   const all = devices(sws);
-  const rows = all.filter(d => !q || q.split(/\s+/).every(w => [d.name, d.ip, d.mac, d.sw, d.port, short(d.port), ...d.vids].join(" ").toLowerCase().includes(w)));
-  $("clients").innerHTML = "<thead><tr><th>" + [t("Device"), t("IP address"), t("MAC address"), t("Switch"), t("Port"), t("VLAN")].join("</th><th>") + "</th></tr></thead><tbody>" +
-    (rows.map(d => "<tr><td>" + esc(d.name || "—") + "</td><td>" + esc(d.ip || "") + '</td><td class="mono">' + esc(d.mac) + "</td><td>" + esc(d.sw) +
+  const rows = all.filter(d => !q || q.split(/\s+/).every(w => [d.name, d.ip, d.mac, d.sw, d.port, short(d.port), t(KIND_LABEL[kindOf(d)]), ...d.vids].join(" ").toLowerCase().includes(w)));
+  $("clients").innerHTML = "<thead><tr><th>" + [t("Device"), t("Kind"), t("IP address"), t("MAC address"), t("Switch"), t("Port"), t("VLAN")].join("</th><th>") + "</th></tr></thead><tbody>" +
+    (rows.map(d => "<tr><td>" + nameCell(d) + "</td><td>" + kindButton(d) + "</td><td>" + esc(d.ip || "") + '</td><td class="mono">' + esc(d.mac) + "</td><td>" + esc(d.sw) +
       '</td><td><button class="chip" data-goto="ports/' + esc(d.sw) + '" data-sel="' + esc(d.port) + '">' + esc(d.port) + "</button></td><td>" + esc(d.vids.join(", ")) + "</td></tr>").join("") ||
-      '<tr><td colspan="6" class="sub">' + t("No device matches.") + "</td></tr>") + "</tbody>";
+      '<tr><td colspan="7" class="sub">' + t("No device matches.") + "</td></tr>") + "</tbody>";
   $("view-title").textContent = t(VIEWS.clients) + " · " + (q ? rows.length + " / " : "") + all.length;
 }
 
 /* DHCP: reservations from the file (repository) vs the router, or the router itself (direct mode) */
+
+// Two texts as a diff with 2 lines of context, for a <pre class="diff">.
+function diffHtml(old, now) {
+  const d = diffLines(old.split("\n"), now.split("\n"));
+  const near = i => d.slice(Math.max(0, i - 2), i + 3).some(y => y[0] !== " ");
+  let gap = false;
+  return d.map((x, i) => {
+    if (!near(i)) { const g = gap ? "" : '<span class="gap">…</span>'; gap = true; return g; }
+    gap = false;
+    return '<span class="' + (x[0] === "+" ? "add" : x[0] === "-" ? "del" : "") + '">' + esc(x[0] + " " + x[1]) + "</span>";
+  }).join("");
+}
 
 // Line diff (LCS): [" ", line] kept, ["-", line] removed, ["+", line] added.
 function diffLines(a, b) {
@@ -666,10 +653,10 @@ const gitMode = () => CFG.dhcp && CFG.dhcp.mode === "git" && D && D.can_apply;
 
 // Another switch in the DHCP view: its own data, nothing pending carried over.
 async function pickDhcp(name) {
-  if (CHANGES.length && !(await ask(t("Discard the pending changes?"), "", t("Discard")))) return;
+  if ((CHANGES.length || SN.length) && !(await ask(t("Discard the pending changes?"), "", t("Discard")))) return;
   CFG.dhcp = CFG.dhcp_targets.find(x => x.switch === name) || CFG.dhcp;
   try { localStorage.setItem("cairn-dhcp", CFG.dhcp.switch); } catch { /* not remembered */ }
-  CHANGES = []; PREVIEW = null; D = null;
+  CHANGES = []; PREVIEW = null; D = null; SN = []; SN_PREVIEW = null;
   render(true);
   slowTick();
 }
@@ -705,6 +692,12 @@ async function resForm(entry, lease) {
 
 // Server checks (src/dhcp.rs, English) -> page language.
 const PROBLEMS = [
+  // src/statics.rs
+  [/^(.*): invalid name \(letters, digits, dashes, dots\)$/, "{who}: invalid name (letters, digits, dashes, dots)"],
+  [/^(.*): listed twice with (\S+)$/, "{who}: listed twice with {v}"],
+  [/^(.*): already the name of the DHCP reservation of (\S+)$/, "{who}: already the name of the DHCP reservation of {v}"],
+  [/^(.*): already the name of a lease \((\S+)\)$/, "{who}: already the name of a lease ({v})"],
+  [/^(\S+ \S+) is already in the file$/, "{who} is already in the file"], [/^(\S+ \S+) is not in the file$/, "{who} is not in the file"],
   [/^(.*): invalid MAC address (.*)$/, "{who}: invalid MAC address {v}"], [/^(.*): invalid IP address (.*)$/, "{who}: invalid IP address {v}"],
   [/^(.*): (\S+) is outside (.*)$/, "{who}: {v} is outside {net}"], [/^(.*): invalid name .*$/, "{who}: invalid name (letters, digits, dashes)"],
   [/^(.*): same (MAC|IP|name) as (.*)$/, "{who}: same {v} as {net}"],
@@ -715,6 +708,9 @@ const PROBLEMS = [
   [/^(\S+) overlaps (\S+), already on the switch$/, "{v} overlaps {net}, already on the switch", 1],
   [/^(\S+) is dynamic \(DHCP client\): it cannot be edited$/, "{v} is dynamic (DHCP client): it cannot be edited", 1],
   [/^(\S+) is not in direct mode: nothing is written to it$/, "{who} is not in direct mode: nothing is written to it"],
+  // src/firewall.rs
+  [/^(.*) could cut Cairn Net off the switch \((.*), (\S+)\): refused$/, "{who} could cut Cairn Net off the switch ({v}, {net}): refused"],
+  [/^every row needs (\S+)$/, "every row needs {who}"],
 ];
 function problemText(p) {
   for (const [re, k, raw] of PROBLEMS) {
@@ -909,6 +905,7 @@ function renderDhcp() {
   $("dhcp-tabs").innerHTML = tg.map(x => '<button class="chip' + (CFG.dhcp && x.switch === CFG.dhcp.switch ? " on" : "") + '" data-act="dhcp-sw" data-name="' + esc(x.switch) + '">' +
     esc(x.switch) + "</button>").join("");
   if (!CFG.dhcp || !D) return;
+  renderStatic();
   // A switch in read-only mode: no edit button anywhere in this view.
   document.body.classList.toggle("ro-dhcp", ((CFG.switches.find(x => x.name === CFG.dhcp.switch) || {}).mode || "read") === "read");
   renderServers();
@@ -931,14 +928,7 @@ function renderDhcp() {
   // Pending changes: the dhcp.yml diff, with 2 lines of context.
   $("dhcp-pending").hidden = !PREVIEW;
   if (PREVIEW) {
-    const d = diffLines(PREVIEW.old.split("\n"), PREVIEW.new.split("\n"));
-    const near = i => d.slice(Math.max(0, i - 2), i + 3).some(y => y[0] !== " ");
-    let gap = false;
-    const pre = d.map((x, i) => {
-      if (!near(i)) { const g = gap ? "" : '<span class="gap">…</span>'; gap = true; return g; }
-      gap = false;
-      return '<span class="' + (x[0] === "+" ? "add" : x[0] === "-" ? "del" : "") + '">' + esc(x[0] + " " + x[1]) + "</span>";
-    }).join("");
+    const pre = diffHtml(PREVIEW.old, PREVIEW.new);
     const why = t("Git mode without a repository: set it in Settings.");
     const blocked = (PREVIEW.problems || []).length > 0, cmds = PREVIEW.commands || [];
     $("dhcp-pending").innerHTML = '<div class="card-head"><h3>' + tp(CHANGES.length, "{n} pending change", "{n} pending changes") + "</h3>" +
@@ -990,6 +980,87 @@ function renderDhcp() {
   $("dhcp-names").innerHTML = "<thead><tr><th>" + t("Name") + "</th><th>" + t("IP address") + "</th></tr></thead><tbody>" +
     (D.names.map(([ip, n]) => "<tr><td>" + esc(n) + "</td><td>" + esc(ip) + "</td></tr>").join("") ||
       '<tr><td colspan="2" class="sub">' + t("No bound lease with a usable name yet.") + "</td></tr>") + "</tbody>";
+}
+
+/* Static DNS names (git mode, src/statics.rs): the names file of the repository,
+   next to what the DNS servers of the hosts integration really answer. */
+
+let SN = [], SN_PREVIEW = null, snSeq = 0; // pending changes, their preview
+
+async function snQueue(change) {
+  SN.push(change);
+  await snRefresh();
+}
+async function snRefresh() {
+  const seq = ++snSeq, sent = SN.slice();
+  let p = null;
+  if (sent.length) {
+    try { p = await post("/api/dns-static/preview", { switch: CFG.dhcp.switch, changes: sent }); } catch (e) { p = { ok: false, error: e.message }; }
+  }
+  if (seq !== snSeq) return;
+  if (p && !p.ok) {
+    const bad = sent[sent.length - 1];
+    SN = SN.filter(c => c !== bad);
+    await snRefresh();
+    return banner(t("Refused: {err}", { err: problemText(p.error) }));
+  }
+  SN_PREVIEW = p;
+  banner("");
+  render(true);
+}
+
+async function snForm(e) {
+  const fd = await ask(e ? t("Edit {name}", { name: e.name }) : t("New DNS name"),
+    "<label>" + t("Name") + '<input name="name" required maxlength="253" pattern="[A-Za-z0-9]([A-Za-z0-9.\\-]*[A-Za-z0-9])?" value="' + esc(e ? e.name : "") + '" autocapitalize="none"></label>' +
+    "<label>" + t("IP address") + '<input name="ip" required pattern="(\\d{1,3}\\.){3}\\d{1,3}" value="' + esc(e ? e.ip : "") + '" placeholder="192.168.1.x"></label>' +
+    "<label>" + t("Comment (optional, one line in the file)") + '<input name="comment" maxlength="200" value="' + esc(e ? e.comment : "") + '"></label>', e ? t("Edit") : t("Add"));
+  if (!fd) return;
+  const v = k => String(fd.get(k) || "").trim();
+  return snQueue(e ? { op: "set", old_ip: e.ip, old_name: e.name, ip: v("ip"), name: v("name"), comment: v("comment") }
+    : { op: "add", ip: v("ip"), name: v("name"), comment: v("comment") });
+}
+
+async function snApply() {
+  if (!(await ask(t("Commit to the repository?"), "<p>" + esc(t("One commit under your name with these changes.")) + "</p>", t("Commit")))) return;
+  let r;
+  try { r = await post("/api/dns-static/apply", { switch: CFG.dhcp.switch, changes: SN }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) return banner(t("Commit refused: {err}", { err: problemText(r.error || "") }));
+  SN = []; SN_PREVIEW = null;
+  await slowTick();
+  banner(r.commit ? t("Committed ({c}). Your own tool (Ansible, CI) publishes the names.", { c: r.commit }) : t("Nothing to change: the file already says this."), "ok");
+}
+
+function renderStatic() {
+  const st = D && D.static;
+  $("sn-box").hidden = !st;
+  if (!st) return;
+  const served = st.served || [];
+  $("sn-state").textContent = st.error ? t("{file} unreadable: {err}", { file: st.path, err: st.error })
+    : tp(st.entries.length, "{n} name in {file}.", "{n} names in {file}.", { file: st.path }) + " " +
+      (served.length ? t("Compared with what {servers} answer.", { servers: served.map(s => s.server).join(", ") }) : t("Set a DNS hosts integration to compare with what the DNS servers answer."));
+  const probs = (SN_PREVIEW ? SN_PREVIEW.problems : st.problems) || [];
+  $("sn-problems").hidden = !probs.length;
+  $("sn-problems").innerHTML = probs.map(p => "<li>" + esc(problemText(p)) + "</li>").join("");
+  $("sn-pending").hidden = !SN_PREVIEW;
+  if (SN_PREVIEW) {
+    const blocked = probs.length > 0;
+    $("sn-pending").innerHTML = '<div class="card-head"><h3>' + tp(SN.length, "{n} pending change", "{n} pending changes") + "</h3>" +
+      '<span class="pill warn">' + t("not applied") + "</span></div>" + '<pre class="diff">' + diffHtml(SN_PREVIEW.old, SN_PREVIEW.new) + "</pre>" +
+      '<p class="sub">' + esc(t("Committing writes the file in the repository under your name; your own tool (Ansible, CI) then publishes the names.")) + "</p>" +
+      '<div class="toolbar"><button class="primary" data-act="sn-apply"' + (blocked ? " disabled" : "") + ">" + t("Commit") + '</button><button data-act="sn-discard">' + t("Discard") + "</button></div>" +
+      (blocked ? '<p class="sub">' + esc(t("Fix the problems above first.")) + "</p>" : "");
+  }
+  const cell = (s, e) => {
+    const a = s.error ? undefined : (s.answers || {})[e.name];
+    const v = s.error ? ["bad", t("unreachable")] : a === undefined ? ["", "—"] : a === null ? ["warn", t("no answer")]
+      : a.includes(e.ip) ? ["ok", t("served")] : a.length ? ["warn", t("answers {ip}", { ip: a.join(", ") })] : ["bad", t("unknown")];
+    return '<td><span class="pill ' + v[0] + '">' + esc(v[1]) + "</span></td>";
+  };
+  $("sn-table").innerHTML = "<thead><tr><th>" + [t("Name"), t("IP address")].concat(served.map(s => s.server), [t("Note"), ""]).map(esc).join("</th><th>") + "</th></tr></thead><tbody>" +
+    (st.entries.map((e, i) => "<tr><td><b>" + esc(e.name) + "</b></td><td>" + esc(e.ip) + "</td>" + served.map(s => cell(s, e)).join("") +
+      '<td class="wrap sub note">' + esc(e.comment) + '</td><td class="actions"><button data-act="sn-edit" data-i="' + i + '">' + t("Edit") +
+      '</button><button class="danger" data-act="sn-del" data-i="' + i + '">' + t("Delete") + "</button></td></tr>").join("") ||
+      '<tr><td colspan="' + (4 + served.length) + '" class="sub">' + t("No name in the file yet.") + "</td></tr>") + "</tbody>";
 }
 
 /* Infrastructure: one switch as WebFig's Quick Set shows it (src/infra.rs).
@@ -1079,6 +1150,336 @@ function renderInfra() {
       "</td><td>" + esc(match(x) || t("everything")) + "</td><td>" + esc([x["to-addresses"], x["to-ports"]].filter(Boolean).join(":")) + '</td><td class="wrap sub">' + esc(x.comment || "") + "</td></tr>").join("") ||
       '<tr><td colspan="5" class="sub">' + esc(t("No NAT rule.")) + "</td></tr>") + "</tbody>";
 }
+
+/* Firewall: the IPv4 firewall of one switch, in RouterOS order, with its
+   counters (src/firewall.rs). Direct mode: one table at a time is edited
+   in the page (FWE), then previewed and applied; the switch rolls the whole
+   table back by itself unless the change is kept within rollback_s seconds. */
+
+let FW = null, FWE = null, FW_UNTIL = 0; // /api/firewall of SW; the table being edited {table, rows}; when the switch rolls back (ms)
+
+async function loadFw() {
+  const name = SW;
+  if (!name) return;
+  try { const v = await get("/api/firewall?switch=" + encodeURIComponent(name)); if (name === SW) FW = v; }
+  catch (e) { if (name === SW) FW = { name, error: e.message }; }
+  if (VIEW === "firewall") render(true);
+}
+
+const FW_TABLES = { filter: "Filter", nat: "NAT", mangle: "Mangle", raw: "Raw" };
+const FW_LISTS = "address-list";
+// properties that are not matchers: bookkeeping, or the action's own parameters
+const FW_META = new Set([".id", "chain", "action", "comment", "disabled", "dynamic", "invalid", "bytes", "packets", "log", "log-prefix",
+  "jump-target", "to-addresses", "to-ports", "passthrough", "address-list", "address-list-timeout", "reject-with", "route-dst"]);
+// read only on the switch: kept for the counters, never sent as wanted
+const FW_RO = new Set([".id", ".nextid", "bytes", "packets", "invalid", "dynamic", "creation-time"]);
+const FW_CHAINS = { filter: ["input", "forward", "output"], nat: ["srcnat", "dstnat"], mangle: ["prerouting", "input", "forward", "output", "postrouting"], raw: ["prerouting", "output"] };
+const FW_ACTIONS = {
+  filter: ["accept", "drop", "reject", "jump", "return", "log", "passthrough", "tarpit", "fasttrack-connection", "add-src-to-address-list", "add-dst-to-address-list"],
+  nat: ["masquerade", "src-nat", "dst-nat", "redirect", "netmap", "same", "endpoint-independent-nat", "accept", "jump", "return", "log", "passthrough"],
+  mangle: ["mark-connection", "mark-packet", "mark-routing", "change-mss", "change-ttl", "change-dscp", "set-priority", "accept", "jump", "return", "log", "passthrough"],
+  raw: ["accept", "drop", "notrack", "jump", "return", "log", "passthrough"],
+};
+const fwAction = x => [x.action, x["jump-target"] && "→ " + x["jump-target"], x["to-addresses"] && "→ " + x["to-addresses"] + (x["to-ports"] ? ":" + x["to-ports"] : ""),
+  !x["to-addresses"] && x["to-ports"] && "→ :" + x["to-ports"], x["address-list"] && "→ " + x["address-list"] + (x["address-list-timeout"] ? " (" + x["address-list-timeout"] + ")" : ""),
+  x["reject-with"], ...Object.keys(x).filter(k => k.startsWith("new-")).map(k => k + "=" + x[k]), yes(x.log) && "log" + (x["log-prefix"] ? " " + x["log-prefix"] : "")].filter(Boolean).join(" ");
+const fwMatch = x => Object.keys(x).filter(k => !FW_META.has(k) && !FW_RO.has(k) && !k.startsWith("new-") && x[k] !== "").map(k => k + "=" + x[k]);
+const fwRows = (v, table) => (table === FW_LISTS ? v.address_lists : (v.tables || {})[table]) || [];
+const fwStatic = (v, table) => fwRows(v, table).filter(x => !yes(x.dynamic)).map(x => Object.assign({}, x));
+const fwWaiting = v => !!(v.rollback || FW_UNTIL > Date.now());
+const fwCan = v => v.mode === "direct" || !!(v.git && v.file);
+const btn = (act, label, i, cls = "") => '<button class="' + cls + '" data-act="' + act + '"' + (i == null ? "" : ' data-i="' + i + '"') + ">" + esc(t(label)) + "</button>";
+
+function fwHead(v, table, title, addLabel) {
+  const editing = FWE && FWE.table === table;
+  const acts = editing ? (Object.values(FW_TPL).some(x => x.table === table) ? btn("fw-tpl", "From a template") : "") + btn("fw-add", addLabel) +
+      btn("fw-preview", "Preview", null, "primary") + btn("fw-cancel", "Cancel")
+    : fwCan(v) && !FWE && !fwWaiting(v) ? btn("fw-edit", "Edit").replace("<button", '<button data-table="' + esc(table) + '"') : "";
+  return '<div class="card-head"><h2>' + esc(t(title)) + "</h2>" + (acts ? '<div class="toolbar">' + acts + "</div>" : "") + "</div>";
+}
+
+function fwRowActs(x, i, n) {
+  return '<td class="actions">' + (i > 0 ? btn("fw-up", "↑", i) : "") + (i < n - 1 ? btn("fw-down", "↓", i) : "") + btn("fw-row", "Edit", i) +
+    btn("fw-toggle", yes(x.disabled) ? "Enable" : "Disable", i) + btn("fw-del", "Delete", i, "danger") + "</td>";
+}
+
+function fwPending() {
+  const box = $("fw-pending"), v = FW;
+  const left = Math.max(0, Math.ceil((FW_UNTIL - Date.now()) / 1000));
+  const waiting = v && !v.error && (left > 0 || v.rollback);
+  box.hidden = !waiting;
+  if (!waiting) return;
+  box.innerHTML = '<div class="card-head"><h3>' + esc(t("Keep these settings on {name}?", { name: v.name })) + '</h3><span class="pill warn">' +
+    esc(left > 0 ? t("rollback in {n} s", { n: left }) : t("rollback at {time}", { time: (v.rollback || {})["next-run"] || "?" })) + "</span></div>" +
+    '<p class="sub">' + esc(t("Cairn Net read the switch back as asked. Without your confirmation, the switch puts the old settings back by itself.")) + "</p>" +
+    '<div class="toolbar"><button class="primary" data-act="fw-keep">' + esc(t("Keep")) + "</button></div>";
+}
+
+function renderFw() {
+  $("fw-tabs").innerHTML = CFG.switches.map(s => '<button class="chip' + (s.name === SW ? " on" : "") + '" data-goto="firewall/' + esc(s.name) + '">' + esc(s.name) + "</button>").join("");
+  const v = FW && FW.name === SW ? FW : null;
+  fwPending();
+  if (!v || v.error) {
+    $("fw-cards").innerHTML = '<p class="verdict ' + (v ? "bad" : "") + '">' + (v ? '<span class="dot bad"></span>' + esc(t("{name} unreachable: {err}", { name: SW, err: v.error })) : esc(t("Loading…"))) + "</p>";
+    for (const id of ["fw-tables", "fw-addr", "fw-ifl"]) $(id).innerHTML = "";
+    return;
+  }
+  const tb = v.tables || {}, tr = v.tracking || {};
+  const kv = rows => '<dl class="kv">' + rows.map(([k, val, c]) => "<dt>" + esc(k) + '</dt><dd class="' + (c || "") + '">' + esc(val) + "</dd>").join("") + "</dl>";
+  const active = yes(tr.active);
+  $("fw-cards").innerHTML =
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Rules")) + '</h3><span class="pill">' + esc(t(MODE_LABEL[v.mode] || v.mode)) + "</span></div>" +
+      kv(Object.entries(FW_TABLES).map(([k, label]) => { const rs = tb[k] || [], off = rs.filter(x => yes(x.disabled)).length;
+        return [t(label), rs.length ? tp(rs.length, "{n} rule", "{n} rules") + (off ? " · " + t("{n} disabled", { n: off }) : "") : t("none")]; })) +
+      (v.mode !== "read" ? '<p class="sub">' + esc(t("A change that could cut Cairn Net's path ({app} → {iface}, API port) is refused.", { app: v.app || "?", iface: v.app_iface || t("any interface") })) + "</p>" : "") +
+    "</article>" +
+    '<article class="card srv"><div class="card-head"><h3>' + esc(t("Connection tracking")) + '</h3><span class="pill ' + (active ? "ok" : "") + '">' + esc(active ? t("running") : t("not running")) + "</span></div>" +
+      kv([[t("Setting"), tr.enabled || "—"], [t("Connections"), tr.entries != null ? num(tr.entries).toLocaleString(LOCALE()) + (tr.max ? " / " + num(tr.max).toLocaleString(LOCALE()) : "") : "—"]]) +
+      (!active && tr.enabled === "auto" ? '<p class="sub">' + esc(t("Off while the firewall is empty: the first rule turns it on, and connections already open (SSH, WinBox) may be cut once.")) + "</p>" : "") +
+    "</article>" + (v.git ? fwGitCard(v) : "");
+
+  $("fw-tables").innerHTML = Object.entries(FW_TABLES).filter(([k]) => (tb[k] || []).length || fwCan(v)).map(([k, label]) => {
+    const editing = FWE && FWE.table === k, rows = editing ? FWE.rows : tb[k];
+    let n = 0;
+    return fwHead(v, k, label, "Add a rule") + '<div class="card table-wrap"><table><thead><tr><th>' +
+      ["#", t("Chain"), t("Action"), t("Match"), t("Packets"), t("Bytes"), t("Comment")].join("</th><th>") + (editing ? "</th><th>" : "") + "</th></tr></thead><tbody>" +
+      (rows.map((x, i) => { const m = fwMatch(x), off = yes(x.disabled), fresh = !x[".id"], isNew = fresh && !v.git;
+        return '<tr class="' + (off ? "dim" : "") + '"><td class="num">' + (yes(x.dynamic) ? "D" : ++n) + "</td><td>" + esc(x.chain) + "</td><td><b>" + esc(fwAction(x)) + "</b>" +
+          (off ? ' <span class="pill">' + esc(t("disabled")) + "</span>" : "") + (yes(x.invalid) ? ' <span class="pill warn">' + esc(t("invalid")) + "</span>" : "") +
+          (isNew ? ' <span class="pill ok">' + esc(t("new")) + "</span>" : "") +
+          '</td><td class="wrap mono">' + (m.length ? m.map(esc).join("<br>") : esc(t("everything"))) + '</td><td class="num">' + (fresh ? "—" : esc(num(x.packets).toLocaleString(LOCALE()))) +
+          '</td><td class="num">' + (fresh ? "—" : esc(bytes(num(x.bytes)))) + '</td><td class="wrap sub">' + esc(x.comment || "") + "</td>" + (editing ? fwRowActs(x, i, rows.length) : "") + "</tr>"; }).join("") ||
+        '<tr><td colspan="' + (editing ? 8 : 7) + '" class="sub">' + esc(t("No rule.")) + "</td></tr>") + "</tbody></table></div>";
+  }).join("") || '<p class="sub">' + esc(t("No firewall rule on this switch.")) + "</p>";
+
+  const editingL = FWE && FWE.table === FW_LISTS;
+  $("fw-addr-head").innerHTML = fwHead(v, FW_LISTS, "Address lists", "Add an address");
+  const al = editingL ? FWE.rows : (v.address_lists || []).slice().sort((a, b) => natural(a.list, b.list) || natural(a.address, b.address));
+  $("fw-addr").innerHTML = "<thead><tr><th>" + [t("List"), t("Address"), t("Origin"), t("Timeout"), t("Comment")].join("</th><th>") + (editingL ? "</th><th>" : "") + "</th></tr></thead><tbody>" +
+    (al.map((a, i) => '<tr class="' + (yes(a.disabled) ? "dim" : "") + '"><td><b>' + esc(a.list) + "</b>" + (a[".id"] || v.git ? "" : ' <span class="pill ok">' + esc(t("new")) + "</span>") +
+      "</td><td>" + esc(a.address) + "</td><td>" + esc(yes(a.dynamic) ? t("dynamic") : t("static")) +
+      "</td><td>" + esc(a.timeout || "") + '</td><td class="wrap sub">' + esc(a.comment || "") + "</td>" +
+      (editingL ? '<td class="actions">' + btn("fw-row", "Edit", i) + btn("fw-toggle", yes(a.disabled) ? "Enable" : "Disable", i) + btn("fw-del", "Delete", i, "danger") + "</td>" : "") + "</tr>").join("") ||
+      '<tr><td colspan="' + (editingL ? 6 : 5) + '" class="sub">' + esc(t("No address list.")) + "</td></tr>") + "</tbody>";
+
+  const mem = v.iface_members || [];
+  const lists = (v.iface_lists || []).filter(l => !yes(l.builtin) || mem.some(m => m.list === l.name));
+  $("fw-ifl").innerHTML = "<thead><tr><th>" + [t("List"), t("Interfaces"), t("Comment")].join("</th><th>") + "</th></tr></thead><tbody>" +
+    (lists.map(l => "<tr><td><b>" + esc(l.name) + '</b></td><td class="wrap">' +
+      esc(mem.filter(m => m.list === l.name).map(m => m.interface + (yes(m.disabled) ? " ✕" : "")).sort(natural).join(", ") || t("no interface")) +
+      [l.include && " + " + l.include, l.exclude && " − " + l.exclude].filter(Boolean).map(esc).join("") + '</td><td class="wrap sub">' + esc(l.comment || "") + "</td></tr>").join("") ||
+      '<tr><td colspan="3" class="sub">' + esc(t("No interface list.")) + "</td></tr>") + "</tbody>";
+}
+
+/* Git mode: the repository's file is the reference; the switch may differ from it. */
+function fwGitCard(v) {
+  const g = v.git, d = v.drift || [], free = !FWE && !fwWaiting(v);
+  const pill = v.file_error ? '<span class="pill bad">' + esc(t("file unreadable")) + "</span>"
+    : d.length ? '<span class="pill warn">' + esc(t("differs from the file")) + "</span>" : '<span class="pill ok">' + esc(t("in line with the file")) + "</span>";
+  const label = k => t(FW_TABLES[k] || (k === FW_LISTS ? "Address lists" : k));
+  return '<article class="card srv"><div class="card-head"><h3>' + esc(t("Repository")) + "</h3>" + pill + "</div>" +
+    '<p class="mono fp">' + esc(g.url + " · " + g.branch + " · " + g.path) + "</p>" +
+    (v.file_error ? '<p class="sub bad-note">' + esc(v.file_error) + "</p>" : "") +
+    (v.file && !Object.keys(v.file).length ? '<p class="sub">' + esc(t("The file holds no table yet: import the switch's rules to start from what it runs.")) + "</p>" : "") +
+    (d.length ? '<p class="sub">' + esc(t("The switch does not run these tables as the file says: {list}.", { list: d.map(label).join(", ") })) + "</p>" : "") +
+    (free && v.file ? '<div class="toolbar">' + d.map(k => btn("fw-repo", t("Apply the file: {table}", { table: label(k) })).replace("<button", '<button data-table="' + esc(k) + '"')).join("") +
+      btn("fw-import", "Import the switch's rules into the file") + "</div>" : "") +
+    "</article>";
+}
+
+const opts = (id, vals) => '<datalist id="' + id + '">' + [...new Set(vals)].map(x => '<option value="' + esc(x) + '">').join("") + "</datalist>";
+
+/* One row of the table being edited (i: its index, none: a new row at the end). */
+async function fwRowForm(i) {
+  const table = FWE.table, x = i == null ? {} : FWE.rows[i], list = table === FW_LISTS;
+  const field = (name, label, val, extra = "") => "<label>" + esc(t(label)) + '<input name="' + name + '" value="' + esc(val || "") + '" autocomplete="off" ' + extra + "></label>";
+  const rest = Object.keys(x).filter(k => !FW_RO.has(k) && !["chain", "action", "comment", "disabled", "list", "address"].includes(k)).map(k => k + "=" + x[k]);
+  const fd = await ask(t(i == null ? (list ? "Add an address" : "Add a rule") : "Edit"),
+    (list
+      ? field("list", "List", x.list, 'required list="fw-lists"') + opts("fw-lists", fwRows(FW, FW_LISTS).map(a => a.list)) +
+        field("address", "Address", x.address, 'required placeholder="192.168.1.0/24, 10.0.0.1-10.0.0.9, host.example"')
+      : '<div class="cols2">' + field("chain", "Chain", x.chain, 'required list="fw-chains"') + field("action", "Action", x.action, 'required list="fw-actions"') + "</div>" +
+        opts("fw-chains", FW_CHAINS[table].concat(fwRows(FW, table).map(r => r.chain))) + opts("fw-actions", FW_ACTIONS[table])) +
+    "<label>" + esc(t(list ? "Other properties, one key=value per line" : "Matchers and action parameters, one key=value per line (RouterOS names)")) +
+      '<textarea name="props" rows="6" placeholder="' + esc(list ? "timeout=1d" : "in-interface=vlan20\nprotocol=tcp\ndst-port=80,443\nsrc-address=!10.0.0.0/8") + '">' + esc(rest.join("\n")) + "</textarea></label>" +
+    field("comment", "Comment", x.comment) +
+    '<label class="check"><input type="checkbox" name="disabled"' + (yes(x.disabled) ? " checked" : "") + "> " + esc(t("Disabled")) + "</label>" +
+    '<p class="sub">' + esc(t("Nothing is written yet: the next step shows the commands.")) + "</p>", t("OK"));
+  if (!fd) return;
+  const g = k => String(fd.get(k) || "").trim();
+  const row = {};
+  for (const k of FW_RO) if (x[k] !== undefined) row[k] = x[k]; // the same row on the switch, its counters
+  for (const k of list ? ["list", "address"] : ["chain", "action"]) row[k] = g(k);
+  for (const line of g("props").split("\n").map(l => l.trim()).filter(Boolean)) {
+    const j = line.indexOf("=");
+    const k = j > 0 ? line.slice(0, j).trim() : "";
+    if (!/^[a-z0-9-]+$/.test(k) || FW_RO.has(k)) return banner(t("{who}: invalid property name", { who: line }));
+    row[k] = line.slice(j + 1).trim();
+  }
+  if (g("comment")) row.comment = g("comment");
+  if (fd.get("disabled")) row.disabled = "true";
+  if (i == null) FWE.rows.push(row); else FWE.rows[i] = row;
+  banner("");
+  render(true);
+}
+
+/* Templates (lot 2c): common needs written as RouterOS rules, added to the
+   table being edited. They only fill the editor: the preview, the guard of
+   the management path and the rollback apply as for any hand-made row. */
+
+const PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"];
+const FW_TPL = {
+  isolate: { table: "filter", label: "Isolated network, Internet only", fields: ["iface", "dns", "local_dns"],
+    help: "The network reaches the Internet, never the private networks (LAN, other VLANs, management) nor the switch itself, except DHCP, ping and, if ticked, the switch's DNS. The DNS servers listed stay reachable.",
+    rules: f => {
+      const I = { "in-interface": f.iface }, c = x => t("{iface}: " + x, { iface: f.iface });
+      return [
+        ["head", { chain: "input", action: "accept", ...I, protocol: "udp", "dst-port": "67", comment: c("DHCP") }],
+        ...(f.local_dns ? ["udp", "tcp"].map(p => ["head", { chain: "input", action: "accept", ...I, protocol: p, "dst-port": "53", comment: c("DNS of the switch") }]) : []),
+        ["head", { chain: "input", action: "accept", ...I, protocol: "icmp", comment: c("ping of the gateway") }],
+        ["head", { chain: "input", action: "drop", ...I, comment: c("nothing else to the switch") }],
+        ["head", { chain: "forward", action: "drop", ...I, "connection-state": "invalid", comment: c("invalid packets") }],
+        ...list(f.dns).flatMap(d => ["udp", "tcp"].map(p => ["head", { chain: "forward", action: "accept", ...I, "dst-address": d, protocol: p, "dst-port": "53", comment: c("DNS") }])),
+        ...PRIVATE.map(n => ["head", { chain: "forward", action: "drop", ...I, "dst-address": n, comment: c("no private network") }]),
+        ["head", { chain: "forward", action: "accept", ...I, comment: c("Internet") }],
+      ];
+    } },
+  block: { table: "filter", label: "Block traffic between two networks", fields: ["src", "dst", "both"],
+    rules: f => [[f.src, f.dst], ...(f.both ? [[f.dst, f.src]] : [])].map(([a, b]) => ["head", { chain: "forward", action: "drop", "src-address": a, "dst-address": b, comment: t("{a} -> {b}: blocked", { a, b }) }]) },
+  allow: { table: "filter", label: "Allow a service from one network to another", fields: ["src", "dst", "proto", "port"],
+    help: "Placed before the drop rules of the chain, after the rule that accepts established connections.",
+    rules: f => [["head", { chain: "forward", action: "accept", "src-address": f.src, "dst-address": f.dst, protocol: f.proto, ...(f.port ? { "dst-port": f.port } : {}), comment: t("{a} -> {b}: {p}", { a: f.src, b: f.dst, p: f.proto + (f.port ? " " + f.port : "") }) }]] },
+  admin: { table: "filter", label: "Reach the switch itself from a network", fields: ["src", "proto", "port"],
+    rules: f => [["head", { chain: "input", action: "accept", "src-address": f.src, protocol: f.proto, ...(f.port ? { "dst-port": f.port } : {}), comment: t("{a} -> switch: {p}", { a: f.src, p: f.proto + (f.port ? " " + f.port : "") }) }]] },
+  masq: { table: "nat", label: "Share the uplink (masquerade)", fields: ["net", "out"],
+    help: "Hosts of the network go out with the switch's address on the uplink: for a network the upstream router has no route back to.",
+    rules: f => [["end", { chain: "srcnat", action: "masquerade", "src-address": f.net, "dst-address": "!" + f.net, "out-interface": f.out, comment: t("{a}: masquerade on {b}", { a: f.net, b: f.out }) }]] },
+  forward: { table: "nat", label: "Port forward to an inner host", fields: ["in", "proto", "port", "to", "to_port"],
+    rules: f => [["end", { chain: "dstnat", action: "dst-nat", "in-interface": f.in, protocol: f.proto, "dst-port": f.port, "to-addresses": f.to, ...(f.to_port ? { "to-ports": f.to_port } : {}), comment: t("{p} on {a} -> {b}", { p: f.proto + " " + f.port, a: f.in, b: f.to }) }]] },
+};
+const FW_FIELDS = {
+  iface: ["Interface of the network", "fw-ifaces", true], dns: ["DNS servers it may reach (optional, comma separated)"], local_dns: ["The switch answers DNS for this network", "check"],
+  src: ["From (address, network or range)", "fw-nets", true], dst: ["To (address, network or range)", "fw-nets", true], both: ["Both ways", "check"],
+  proto: ["Protocol", "proto", true], port: ["Port(s), e.g. 443 or 8000-8100 (optional for icmp)"], net: ["Network", "fw-nets", true],
+  out: ["Uplink interface", "fw-ifaces", true], in: ["Incoming interface", "fw-ifaces", true], to: ["Inner host", "", true], to_port: ["Port on the inner host (optional)"],
+};
+
+// "head": before the first row of the chain that is not the accept of established connections;
+// "end": after everything. A missing accept of established connections is added first.
+function fwPlace(rows, place, row) {
+  const est = r => r.action === "accept" && /established/.test(r["connection-state"] || "") && !yes(r.disabled);
+  if (FWE.table === "filter" && row.chain !== "output" && !rows.some(r => r.chain === row.chain && est(r))) {
+    const j = rows.findIndex(r => r.chain === row.chain), e = { chain: row.chain, action: "accept", "connection-state": "established,related", comment: t("Connections already open") };
+    if (j < 0) rows.push(e); else rows.splice(j, 0, e);
+  }
+  if (place === "end") return rows.push(row);
+  let i = rows.findIndex(r => r.chain === row.chain && !est(r) && !r._tpl);
+  if (i < 0) i = rows.length;
+  rows.splice(i, 0, Object.assign(row, { _tpl: true }));
+}
+
+async function fwTemplate() {
+  const names = Object.keys(FW_TPL).filter(k => FW_TPL[k].table === FWE.table);
+  const pick = await ask(t("From a template"), "<label>" + esc(t("Template")) + '<select name="tpl">' +
+    names.map(k => '<option value="' + k + '">' + esc(t(FW_TPL[k].label)) + "</option>").join("") + "</select></label>" +
+    '<p class="sub">' + esc(t("The rules are added to the table being edited: nothing is written before the preview.")) + "</p>", t("Next"));
+  if (!pick) return;
+  const tp = FW_TPL[pick.get("tpl")];
+  const addrs = FW.addresses || [];
+  const fd = await ask(t(tp.label), (tp.help ? '<p class="sub">' + esc(t(tp.help)) + "</p>" : "") + tp.fields.map(k => {
+    const [label, kind, req] = FW_FIELDS[k];
+    if (kind === "check") return '<label class="check"><input type="checkbox" name="' + k + '"> ' + esc(t(label)) + "</label>";
+    if (kind === "proto") return "<label>" + esc(t(label)) + '<select name="' + k + '">' + ["tcp", "udp", "icmp"].map(p => "<option>" + p + "</option>").join("") + "</select></label>";
+    return "<label>" + esc(t(label)) + '<input name="' + k + '" autocomplete="off"' + (kind ? ' list="' + kind + '"' : "") + (req ? " required" : "") + "></label>";
+  }).join("") + opts("fw-ifaces", addrs.map(a => a.interface).sort(natural)) + opts("fw-nets", addrs.map(a => netOf(a.address))), t("Add the rules"));
+  if (!fd) return;
+  const f = {};
+  for (const k of tp.fields) f[k] = FW_FIELDS[k][1] === "check" ? !!fd.get(k) : String(fd.get(k) || "").trim();
+  if (f.proto === "icmp") f.port = "";
+  const rows = FWE.rows;
+  for (const r of rows) delete r._tpl;
+  for (const [place, row] of tp.rules(f)) fwPlace(rows, place, row);
+  for (const r of rows) delete r._tpl;
+  banner("");
+  render(true);
+}
+
+async function fwApply() {
+  const v = FW, w = { switch: v.name, table: FWE.table, rows: FWE.rows };
+  let p;
+  try { p = await post("/api/firewall/preview", w); } catch (e) { p = { ok: false, error: e.message }; }
+  if (!p.ok) return banner(t("Refused: {err}", { err: problemText(p.error || "") }));
+  if (!p.commands.length && !v.git) return banner(t("Nothing to change."), "ok");
+  banner("");
+  const fd = await ask(t("Apply on {name}?", { name: v.name }),
+    (v.git ? '<p class="sub">' + esc(t("Once kept, the table is committed to {path} under your name.", { path: v.git.path })) + "</p>" : "") +
+    (p.commands.length ? "<h3>" + esc(t("Commands")) + '</h3><pre class="diff">' + esc(p.commands.join("\n")) + "</pre>" +
+    "<h3>" + esc(t("Rollback, run by the switch after {n} s unless you keep the change", { n: p.rollback_s })) + '</h3><pre class="diff">' + esc(p.rollback.join("\n")) + "</pre>"
+      : '<p class="sub">' + esc(t("The switch already runs this table as edited: only the file is committed.")) + "</p>") +
+    (p.conntrack ? '<label class="check"><input type="checkbox" name="ack" required> ' +
+      esc(t("This change starts connection tracking: connections already open to the switch (SSH, WinBox) may be cut once.")) + "</label>" : ""),
+    t("Apply"));
+  if (!fd) return;
+  let r;
+  try { r = await post("/api/firewall/apply", Object.assign(w, { ack_conntrack: !!fd.get("ack") })); } catch (e) { r = { ok: false, error: e.message }; }
+  if (r.verified) { FW_UNTIL = Date.now() + r.rollback_s * 1000; FWE = null; banner(""); }
+  else if (r.pending) { FWE = null; banner(t("{done} of {n} commands run on {name}", { done: r.done, n: r.commands.length, name: v.name }) + (r.error ? " · " + problemText(r.error) : "") +
+    " · " + t("the switch puts the old settings back within {n} s", { n: r.rollback_s })); }
+  else if (r.ok) { FWE = null; banner(r.commit ? t("Committed: {sha}", { sha: r.commit }) : t("Nothing to change."), "ok"); }
+  else banner(t("Refused: {err}", { err: problemText(r.error || "") }));
+  await loadFw();
+}
+
+async function fwKeep() {
+  let r;
+  try { r = await post("/api/firewall/confirm", { switch: FW.name }); } catch (e) { r = { ok: false, error: e.message }; }
+  FW_UNTIL = 0;
+  banner(!r.ok ? t("Refused: {err}", { err: problemText(r.error || "") })
+    : r.commit_error ? t("Kept on {name}, but the commit failed: {err}. Import the switch's rules to bring the file in line.", { name: FW.name, err: r.commit_error })
+    : t("Kept on {name}.", { name: FW.name }) + (r.commit ? " " + t("Committed: {sha}", { sha: r.commit }) : ""), r.ok && !r.commit_error ? "ok" : "");
+  await loadFw();
+}
+
+async function fwImport() {
+  const v = FW;
+  const fd = await ask(t("Import the switch's rules into the file"),
+    '<p class="sub">' + esc(t("Every table of {name} (filter, NAT, mangle, raw, address lists) replaces the one in {path}, committed under your name. Nothing is written to the switch.", { name: v.name, path: v.git.path })) + "</p>",
+    t("Import"));
+  if (!fd) return;
+  let r;
+  try { r = await post("/api/firewall/import", { switch: v.name }); } catch (e) { r = { ok: false, error: e.message }; }
+  banner(!r.ok ? t("Refused: {err}", { err: problemText(r.error || "") }) : r.commit ? t("Committed: {sha}", { sha: r.commit }) : t("The file already holds these rules."), r.ok ? "ok" : "");
+  await loadFw();
+}
+
+function fwAct(d) {
+  const i = d.i == null ? null : Number(d.i), rows = FWE && FWE.rows;
+  switch (d.act) {
+    // git mode: the file's rows (the switch's when the file does not hold the table yet)
+    case "fw-edit": FWE = { table: d.table, rows: FW.git && FW.file[d.table] ? FW.file[d.table].map(x => Object.assign({}, x)) : fwStatic(FW, d.table) }; break;
+    case "fw-repo": FWE = { table: d.table, rows: FW.file[d.table].map(x => Object.assign({}, x)) }; return fwApply();
+    case "fw-import": return fwImport();
+    case "fw-cancel": FWE = null; break;
+    case "fw-add": return fwRowForm(null);
+    case "fw-row": return fwRowForm(i);
+    case "fw-up": [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; break;
+    case "fw-down": [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; break;
+    case "fw-toggle": if (yes(rows[i].disabled)) delete rows[i].disabled; else rows[i].disabled = "true"; break;
+    case "fw-del": rows.splice(i, 1); break;
+    case "fw-preview": return fwApply();
+    case "fw-tpl": return fwTemplate();
+    case "fw-keep": return fwKeep();
+    default: return;
+  }
+  render(true);
+}
+
+// The countdown; at zero the switch has rolled back: read it again.
+setInterval(() => {
+  if (!FW_UNTIL || VIEW !== "firewall") return;
+  if (Date.now() >= FW_UNTIL + 3000) { FW_UNTIL = 0; loadFw(); }
+  fwPending();
+}, 1000);
 
 const MASKS = Array.from({ length: 32 }, (_, i) => i + 1);
 const maskText = l => { const m = 2 ** 32 - 2 ** (32 - l); return [24, 16, 8, 0].map(s => Math.floor(m / 2 ** s) % 256).join("."); };
@@ -1203,6 +1604,7 @@ document.addEventListener("click", e => {
     return;
   }
   if (d.act === "dhcp-sw") return pickDhcp(d.name);
+  if (FW && !FW.error && String(d.act || "").startsWith("fw-")) return fwAct(d);
   if (INF && !INF.error) switch (d.act) {
     case "infra-edit": return infraForm();
     case "infra-keep": return infraKeep();
@@ -1218,6 +1620,11 @@ document.addEventListener("click", e => {
     case "srv-edit": return srvForm(D.servers.find(x => x.name === d.name));
     case "srv-toggle": return srvToggle(D.servers.find(x => x.name === d.name));
     case "srv-del": return srvDelete(D.servers.find(x => x.name === d.name));
+    case "sn-new": return D.static && snForm();
+    case "sn-edit": return D.static && snForm(D.static.entries[+d.i]);
+    case "sn-del": { const e = D.static && D.static.entries[+d.i]; return e && snQueue({ op: "del", ip: e.ip, name: e.name }); }
+    case "sn-discard": SN = []; return snRefresh();
+    case "sn-apply": return snApply();
   }
   if (SET) switch (d.act) {
     case "sw-new": return swForm();

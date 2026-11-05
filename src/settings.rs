@@ -27,10 +27,12 @@ pub struct SwitchCfg {
     pub mode: String,
     pub ignore: Vec<String>,
     pub url: String,
-    // git mode: repository, branch and path of the DHCP file in it
+    // git mode: repository, branch, path of the DHCP file, of the firewall file and of the static DNS names file in it
     pub git_url: String,
     pub git_branch: String,
     pub git_path: String,
+    pub git_fw_path: String,
+    pub git_dns_path: String,
     // DNS integration: none, hosts (SSH targets) or routeros; leases of these servers (none = all)
     pub dns: String,
     pub dns_targets: Vec<String>,
@@ -68,6 +70,8 @@ impl SwitchCfg {
             git_url: s("git_url"),
             git_branch: Some(s("git_branch")).filter(|b| !b.is_empty()).unwrap_or_else(|| "main".into()),
             git_path: s("git_path"),
+            git_fw_path: s("git_fw_path"),
+            git_dns_path: s("git_dns_path"),
             dns: Some(s("dns")).filter(|m| !m.is_empty()).unwrap_or_else(|| "none".into()),
             dns_targets: list(&v["dns_targets"]),
             dns_servers: list(&v["dns_servers"]),
@@ -78,7 +82,7 @@ impl SwitchCfg {
     pub fn to_json(&self, secrets: bool) -> Value {
         let mut v = json!({"name": self.name, "host": self.host, "port": self.port, "sha256": pretty(&self.sha256), "user": self.user,
             "write_user": self.write_user, "mode": self.mode, "ignore": self.ignore, "url": self.url,
-            "git_url": self.git_url, "git_branch": self.git_branch, "git_path": self.git_path,
+            "git_url": self.git_url, "git_branch": self.git_branch, "git_path": self.git_path, "git_fw_path": self.git_fw_path, "git_dns_path": self.git_dns_path,
             "dns": self.dns, "dns_targets": self.dns_targets, "dns_servers": self.dns_servers});
         if secrets {
             v["password"] = json!(self.password);
@@ -127,11 +131,13 @@ impl SwitchCfg {
         // passed to git as arguments (never a shell): no option-looking or spaced values
         let plain = |v: &str| !v.starts_with('-') && !v.chars().any(|c| c.is_whitespace() || c.is_control());
         if !self.git_url.is_empty() {
-            if !plain(&self.git_url) || !plain(&self.git_branch) || self.git_branch.is_empty() || !plain(&self.git_path) {
+            if !plain(&self.git_url) || !plain(&self.git_branch) || self.git_branch.is_empty() || !plain(&self.git_path) || !plain(&self.git_fw_path) || !plain(&self.git_dns_path) {
                 return Err("invalid repository, branch or path".into());
             }
-            if self.git_path.is_empty() || self.git_path.starts_with('/') || self.git_path.split('/').any(|p| p == ".." || p.is_empty()) {
-                return Err("the file path must be relative to the repository (e.g. network/dhcp.yml)".into());
+            let bad = |p: &str| p.starts_with('/') || p.split('/').any(|x| x == ".." || x.is_empty());
+            let paths = [&self.git_path, &self.git_fw_path, &self.git_dns_path];
+            if paths.iter().all(|p| p.is_empty()) || paths.iter().any(|p| !p.is_empty() && bad(p)) {
+                return Err("the file paths must be relative to the repository (e.g. network/dhcp.yml, network/firewall.json, network/dns.yml)".into());
             }
         }
         if !crate::dns::KINDS.contains(&self.dns.as_str()) {

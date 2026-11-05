@@ -41,13 +41,21 @@ Demo data.
   the router, with an editor that shows the difference before anything is
   written. Servers can be added, renamed and deleted, take any DHCP option
   (code and value), and can watch their interface for another DHCP server.
-  The names of the leases can be published to a DNS server (below).
+  The names of the leases can be published to a DNS server (below), and in
+  Git mode a file of static DNS names is edited there too.
 - **Infrastructure**: one page per switch, like WebFig's Quick Set:
   identity, addresses per interface or VLAN, default gateway, DNS, bridges
   and their ports, NAT rules, RouterOS and firmware versions, available
   update, uptime. In direct mode, the identity, DNS servers, one address
   and the gateway can be changed, each change guarded by an automatic
   rollback (below).
+- **Firewall**: filter, NAT, mangle and raw rules in order with their
+  counters, address lists, interface lists, connection tracking. In direct
+  or Git mode, one table at a time is edited (by hand or from templates:
+  isolated network, block or allow between networks, masquerade, port
+  forward), previewed as API commands, then applied with an automatic
+  rollback of the whole table. A change that could drop, redirect or
+  re-route Cairn Net's own connection to the switch is refused.
 - **Settings**: switches are added from the page. Cairn Net reads the
   certificate of the switch first, you compare its fingerprint, then the
   accounts are tried. A RouterOS script to prepare a switch is shown there.
@@ -60,7 +68,7 @@ Per switch, in Settings:
 |---|---|
 | **Read only** (default) | Reads. Nothing is ever written. |
 | **Direct** | Writes the DHCP servers and reservations, and the Infrastructure settings, to the switch through its API, with a second account that can write. It reads the switch back afterwards and says whether it matches. |
-| **Git** | Edits a DHCP file in a Git repository and pushes one commit per change, under the name of the person who applies it. Your own tool (Ansible, CI…) applies the file to the switch. |
+| **Git** | Edits a DHCP file in a Git repository and pushes one commit per change, under the name of the person who applies it. Your own tool (Ansible, CI…) applies the file to the switch. The firewall file, if set, is applied by Cairn Net itself (write account), then committed once the change is kept. |
 
 Direct mode suits a router managed by hand; Git mode suits one managed as
 code. Both use the same editor and checks: reservations inside the network,
@@ -143,6 +151,7 @@ Two ways, set in `config.json`:
 | `tls` | | `{"cert": "…/cert.pem", "key": "…/key.pem"}`, PEM files |
 | `trusted_proxies`, `user_header`, `groups_header`, `require_groups` | | proxy mode |
 | `switches` | | seeds Settings the first time only (`name`, `host`, `sha256`, `user`, `mode`…); then Settings is the reference |
+| `notify` | | `{"url": "https://ntfy.example.com/topic", "headers_file": "…"}`: alerts (firewall differing from its Git file) are POSTed there; the file holds header lines (`Authorization: Bearer …`) |
 
 ## Git mode
 
@@ -155,6 +164,27 @@ pushed by someone else in between is kept.
 
 The DHCP file is YAML, edited as text: comments and layout outside the
 touched entry stay as they are.
+
+The firewall file (optional, its own path) is JSON, one key per table and
+one rule per line, in RouterOS properties; a table missing from it is not
+managed:
+
+```json
+{
+  "filter": [
+    {"action":"accept","chain":"input","connection-state":"established,related"},
+    {"action":"drop","chain":"forward","comment":"IoT: no LAN","dst-address":"192.168.10.0/24","in-interface":"vlan20"}
+  ],
+  "nat": []
+}
+```
+
+The Firewall page shows whether the switch runs the file as written. Edits
+start from the file, are applied with the rollback, and are committed when
+you keep them. "Apply the file" puts a table back as the file says;
+"Import the switch's rules into the file" commits what the switch runs (a
+good first step). Every 10 minutes Cairn Net compares them and sends an
+alert (`notify`) when that changes.
 
 ```yaml
 dhcp_reservations:
@@ -185,6 +215,24 @@ Applying it is up to you: for example an Ansible play that turns each
 reservation into a static lease and each server into
 `/ip dhcp-server`, `/ip pool` and `/ip dhcp-server network` (routes as
 option 121).
+
+The static DNS names file (optional, its own path) is YAML too: one list
+of `"IP name"` strings, as a hosts file or a DNS server's local records take
+them. The DHCP page edits it (name, IP, comment) with the same preview and
+commit; your own tool publishes it to the DNS servers. Checks: valid IP,
+valid name (labels separated by dots), no entry listed twice, no name
+already taken by a DHCP reservation or by the name of a lease. When the
+switch publishes its lease names with the `hosts` integration (below), each
+name is also asked to those DNS servers (plain DNS queries, no account) and
+shown as served, missing or answering another address.
+
+```yaml
+local_names:
+  # router and NAS
+  - "192.168.10.1 router"
+  - "192.168.10.5 nas"
+  - "192.168.10.5 files.example.org"
+```
 
 ## Another DHCP server on the network
 
@@ -260,7 +308,7 @@ docker build -t cairn-net .
 
 The build runs the tests (`cargo test`). Without Docker: Rust 1.85 or
 later, `libssl-dev`, `cargo build --release --locked`; at run time `git`
-and `ssh` for Git mode.
+and `ssh` for Git mode, `curl` for alerts.
 
 ## License
 
