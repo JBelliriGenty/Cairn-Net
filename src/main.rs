@@ -77,6 +77,7 @@ struct Config {
     tls: Option<(String, String)>, // PEM certificate and key files
     dhcp: Option<Dhcp>,
     notify: Option<Notify>,
+    summary_token: Option<String>, // bearer token for GET /api/summary only (dashboards)
     public: Value, // what /api/config returns
 }
 
@@ -173,6 +174,11 @@ impl Config {
             notify: v["notify"]["url"].as_str().map(|u| Notify {
                 url: u.to_string(),
                 headers_file: v["notify"]["headers_file"].as_str().unwrap_or("").to_string(),
+            }),
+            summary_token: v["summary_token_file"].as_str().map(|f| {
+                let t = fs::read_to_string(f).expect("summary_token_file unreadable").trim().to_string();
+                assert!(t.len() >= 32, "summary_token_file: token shorter than 32 characters");
+                t
             }),
             public,
         }
@@ -455,6 +461,33 @@ fn slow() -> String {
         let topology = topo::build(&switches, &arp, &names);
         json!({"switches": switches, "arp": arp, "names": names, "topology": topology}).to_string()
     })
+}
+
+/// Read-only figures for dashboards (Homepage): switches reachable, devices
+/// seen, Ethernet ports up, hottest sensor, busiest CPU.
+fn summary() -> Value {
+    let f: Value = serde_json::from_str(&fast()).unwrap_or(Value::Null);
+    let s: Value = serde_json::from_str(&slow()).unwrap_or(Value::Null);
+    let sw: Vec<&Value> = f["switches"].as_array().into_iter().flatten().collect();
+    let ok: Vec<&&Value> = sw.iter().filter(|w| w["error"].is_null()).collect();
+    let rows = |w: &Value, k: &str| w[k].as_array().cloned().unwrap_or_default();
+    let ports_up = ok.iter().flat_map(|w| rows(w, "ifaces")).filter(|i| i["type"] == "ether" && i["running"] == "true").count();
+    let num = |v: &Value| v.as_str().and_then(|x| x.parse::<f64>().ok());
+    let max = |it: &mut dyn Iterator<Item = f64>| it.fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+    let temp = max(&mut ok.iter().flat_map(|w| rows(w, "health"))
+        .filter(|h| h["name"].as_str().is_some_and(|n| n.contains("temperature")))
+        .filter_map(|h| num(&h["value"])));
+    let cpu = max(&mut ok.iter().filter_map(|w| num(&w["resource"]["cpu-load"])));
+    json!({
+        "switches": format!("{}/{}", ok.len(), sw.len()),
+        "switches_up": ok.len(), "switches_total": sw.len(),
+        "devices": s["topology"]["devices"].as_array().map_or(0, Vec::len),
+        "ports_up": ports_up, "temp_max_c": temp, "cpu_max": cpu,
+    })
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /* ---------- DHCP (lot 1) ---------- */
@@ -1356,6 +1389,11 @@ fn handle(cfg: &'static Config, mut r: Request) {
     }
     if path == "/icon.svg" {
         return respond(r, 200, ICON.into(), "image/svg+xml");
+    }
+    if let (Some(t), Method::Get, "/api/summary") = (&cfg.summary_token, r.method(), path.as_str()) {
+        if header(&r, "Authorization").strip_prefix("Bearer ").is_some_and(|b| ct_eq(b, t)) {
+            return respond(r, 200, summary().to_string(), "application/json");
+        }
     }
     if let Some(l) = &cfg.login {
         // signed out: the page itself loads and shows the sign-in form

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-11-07)
+
+- `GET /api/summary` for dashboards such as Homepage, opened by a bearer
+  token (`summary_token_file`): switches reachable, devices, Ethernet ports
+  up, hottest sensor, busiest CPU.
+
 ## 0.2.0 (2026-11-05)
 
 - Topology view: switches, links (LACP, STP-blocked backups) with live

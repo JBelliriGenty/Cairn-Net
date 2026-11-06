@@ -176,6 +176,7 @@ Two ways, set in `config.json`:
 | `trusted_proxies`, `user_header`, `groups_header`, `require_groups` | | proxy mode |
 | `switches` | | seeds Settings the first time only (`name`, `host`, `sha256`, `user`, `mode`…); then Settings is the reference |
 | `notify` | | `{"url": "https://ntfy.example.com/topic", "headers_file": "…"}`: alerts (firewall differing from its Git file) are POSTed there; the file holds header lines (`Authorization: Bearer …`) |
+| `summary_token_file` | | file holding a token (32 characters min., `openssl rand -hex 32`) that opens `GET /api/summary` to dashboards: `Authorization: Bearer <token>`, returns `switches` (`"2/3"` reachable), `switches_up`, `switches_total`, `devices`, `ports_up` (Ethernet running), `temp_max_c`, `cpu_max` (%) |
 
 ## Git mode
 
