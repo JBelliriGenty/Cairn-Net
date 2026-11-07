@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 (2026-11-07)
+
+- `GET /api/export` also carries each switch's live state, as `/api/fast`
+  reads it: `resource` (CPU, memory, uptime), `health` (temperatures,
+  voltages) and `ifaces` (`running`, `disabled`, counters, link downs), for
+  the up/down dots of Cairn Map.
+
 ## 0.4.0 (2026-11-07)
 
 - `export_token_file`: a second bearer token that opens `GET /api/export` only

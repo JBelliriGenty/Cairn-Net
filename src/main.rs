@@ -472,6 +472,26 @@ fn slow() -> String {
     })
 }
 
+/// The Topology read plus, per switch, the live state of /api/fast
+/// (resource, health, ifaces): what an aggregator needs for up/down dots.
+fn export() -> String {
+    let f: Value = serde_json::from_str(&fast()).unwrap_or(Value::Null);
+    let mut s: Value = serde_json::from_str(&slow()).unwrap_or(Value::Null);
+    let live: BTreeMap<String, Value> = f["switches"].as_array().into_iter().flatten()
+        .filter_map(|w| Some((w["name"].as_str()?.to_string(), w.clone()))).collect();
+    for w in s["switches"].as_array_mut().into_iter().flatten() {
+        let Some(l) = w["name"].as_str().and_then(|n| live.get(n)) else { continue };
+        for k in ["resource", "health", "ifaces"] {
+            w[k] = l[k].clone();
+        }
+        if w["error"].is_null() && !l["error"].is_null() {
+            w["error"] = l["error"].clone();
+        }
+    }
+    s["t"] = f["t"].clone();
+    s.to_string()
+}
+
 /// Read-only figures for dashboards (Homepage): switches reachable, devices
 /// seen, Ethernet ports up, hottest sensor, busiest CPU.
 fn summary() -> Value {
@@ -1442,7 +1462,7 @@ fn handle(cfg: &'static Config, mut r: Request) {
     // read-only export (switches, links, devices) for aggregators such as Cairn Map
     if let (Some(t), Method::Get, "/api/export") = (&cfg.export_token, r.method(), path.as_str()) {
         if header(&r, "Authorization").strip_prefix("Bearer ").is_some_and(|b| ct_eq(b, t)) {
-            return respond(r, 200, slow(), "application/json");
+            return respond(r, 200, export(), "application/json");
         }
     }
     if let Some(l) = &cfg.login {

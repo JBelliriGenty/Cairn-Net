@@ -177,7 +177,7 @@ Two ways, set in `config.json`:
 | `switches` | | seeds Settings the first time only (`name`, `host`, `sha256`, `user`, `mode`…); then Settings is the reference |
 | `notify` | | `{"url": "https://ntfy.example.com/topic", "headers_file": "…"}`: alerts (firewall differing from its Git file, switch that can no longer resolve a name) are POSTed there; the file holds header lines (`Authorization: Bearer …`) |
 | `summary_token_file` | | file holding a token (32 characters min., `openssl rand -hex 32`) that opens `GET /api/summary` to dashboards: `Authorization: Bearer <token>`, returns `switches` (`"2/3"` reachable), `switches_up`, `switches_total`, `devices`, `ports_up` (Ethernet running), `temp_max_c`, `cpu_max` (%) |
-| `export_token_file` | | file holding a token (32 characters min.) that opens `GET /api/export` to read-only aggregators (Cairn Map): `Authorization: Bearer <token>`, returns what the Topology and Devices pages read (switches with ports, VLANs, bonds, neighbours, leases, ARP; `topology` with `links` and `devices`: MAC, switch, port, VLAN ids, IP, name, kind) |
+| `export_token_file` | | file holding a token (32 characters min.) that opens `GET /api/export` to read-only aggregators (Cairn Map): `Authorization: Bearer <token>`, returns what the Topology and Devices pages read (switches with ports, VLANs, bonds, neighbours, leases, ARP; `topology` with `links` and `devices`: MAC, switch, port, VLAN ids, IP, name, kind), plus each switch's live `resource`, `health` and `ifaces` as `/api/fast` reads them |
 
 ## Git mode
 
