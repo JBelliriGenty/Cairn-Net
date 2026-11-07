@@ -1,18 +1,28 @@
 //! Bonjour names: a unicast mDNS reverse query (PTR <ip>.in-addr.arpa) sent
 //! to each client's port 5353. Awake Apple devices (and many printers and
 //! speakers) answer with their own name, such as "MacBook-Pro-de-Alex.local",
-//! far better than the "Mac" they send in DHCP. Answers are kept per MAC, so a
-//! device that sleeps later keeps its name. Only clients the app can reach
-//! answer: other VLANs need their firewall to let UDP 5353 through.
+//! far better than the "Mac" they send in DHCP. Answers are kept per MAC in
+//! data_dir/bonjour.json, so a device asleep keeps its name, restarts included.
+//! Only clients on the app's own networks answer: responders ignore queries
+//! from another subnet (RFC 6762), whatever the firewall says.
 
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::net::UdpSocket;
-use std::sync::Mutex;
+use std::fs;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-// ponytail: in memory only, a restart forgets the names of sleeping devices until they wake
 static NAMES: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+static FILE: OnceLock<String> = OnceLock::new();
+
+pub fn init(data_dir: &str) {
+    let path = format!("{data_dir}/bonjour.json");
+    if let Some(m) = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+        *NAMES.lock().unwrap_or_else(|e| e.into_inner()) = m;
+    }
+    let _ = FILE.set(path);
+}
 
 /// MAC (upper case) -> Bonjour name, without ".local".
 pub fn names() -> BTreeMap<String, String> {
@@ -85,7 +95,15 @@ pub fn refresh(leases: &[Value], wait: Duration) {
         let Ok((n, src)) = s.recv_from(&mut buf) else { break };
         let ip = src.ip().to_string();
         if let (Some((_, mac)), Some(name)) = (clients.iter().find(|(i, _)| *i == ip), ptr_answer(&buf[..n])) {
-            NAMES.lock().unwrap_or_else(|e| e.into_inner()).insert(mac.clone(), name);
+            let mut g = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+            if g.insert(mac.clone(), name.clone()).as_ref() != Some(&name) {
+                if let (Some(p), Ok(t)) = (FILE.get(), serde_json::to_string_pretty(&*g)) {
+                    let tmp = format!("{p}.tmp");
+                    if fs::write(&tmp, t).and_then(|_| fs::rename(&tmp, p)).is_err() {
+                        eprintln!("bonjour: cannot write {p}");
+                    }
+                }
+            }
         }
     }
 }

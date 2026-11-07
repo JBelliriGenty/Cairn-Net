@@ -137,6 +137,7 @@ impl Config {
         settings::init(&format!("{data}/settings.json"), seed);
         git::init(&data);
         topo::init(&data);
+        mdns::init(&data);
         let mut public = json!({});
         for k in ["title", "subtitle", "lang"] {
             public[k] = v[k].clone();

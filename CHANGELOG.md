@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4 (2026-11-07)
+
+- Bonjour names are kept in `data_dir/bonjour.json`: a device asleep keeps
+  its name across restarts.
+
 ## 0.3.3 (2026-11-07)
 
 - Bonjour names: every 2 minutes a unicast mDNS reverse query goes to each
