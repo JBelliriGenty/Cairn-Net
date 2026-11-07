@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3 (2026-11-07)
+
+- Bonjour names: every 2 minutes a unicast mDNS reverse query goes to each
+  bound lease; the answer ("MacBook-Pro-de-Alex") is used for DNS and the
+  Devices page, after a name set by hand or a reservation, before the
+  DHCP host-name. Kept per MAC while the app runs.
+- Two leases with the same name: the higher IP gets -2, -3... instead of
+  being left out.
+
 ## 0.3.2 (2026-11-07)
 
 - Git mode: a `.git/index.lock` left by a restart in the middle of a Git

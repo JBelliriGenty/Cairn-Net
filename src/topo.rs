@@ -304,6 +304,7 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
             ip_of.insert(up(s(a, "mac-address")), s(a, "address").to_string());
         }
     }
+    let bonjour = crate::mdns::names();
     for w in &sws {
         for l in rows(w.v, "leases") {
             let mac = up(s(l, "mac-address"));
@@ -313,7 +314,8 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
             if s(l, "status") == "bound" || !ip_of.contains_key(&mac) {
                 ip_of.insert(mac.clone(), s(l, "address").to_string());
             }
-            let n = Some(s(l, "host-name")).filter(|x| !x.is_empty()).unwrap_or_else(|| s(l, "comment").trim_start_matches("ansible:").trim());
+            let n = bonjour.get(&mac).map(String::as_str).or(Some(s(l, "host-name")).filter(|x| !x.is_empty()))
+                .unwrap_or_else(|| s(l, "comment").trim_start_matches("ansible:").trim());
             if !n.is_empty() {
                 name_of.insert(mac, n.to_string());
             }

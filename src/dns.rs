@@ -33,7 +33,7 @@ pub fn target_ok(t: &str) -> bool {
 pub fn names(router: &Value, servers: &[String]) -> Vec<(String, String, String)> {
     let leases = router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let nets = router["dhcp_networks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-    dhcp::names_file(leases, servers, &crate::topo::manual_names()).into_iter().map(|(ip, n)| {
+    dhcp::names_file(leases, servers, &crate::topo::manual_names(), &crate::mdns::names()).into_iter().map(|(ip, n)| {
         let dom = ip.parse().ok().and_then(|a| nets.iter().find(|x| dhcp::in_net(a, x["address"].as_str().unwrap_or(""))))
             .and_then(|x| x["domain"].as_str()).unwrap_or("").to_string();
         (ip, n, dom)
@@ -113,6 +113,7 @@ pub fn publish(slow: &Value) {
             }
             continue;
         }
+        crate::mdns::refresh(router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]), Duration::from_millis(1500));
         let n = names(&router, &c.dns_servers);
         let text = format!("{}|{}", c.dns, hosts_text(&n)) + &c.dns_targets.join(",");
         {

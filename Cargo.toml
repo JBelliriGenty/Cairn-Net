@@ -1,6 +1,6 @@
 [package]
 name = "cairn-net"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Web panel for a few MikroTik RouterOS switches (RouterOS API over TLS): ports, devices, VLANs, DHCP servers and reservations, written directly or through Git, lease names in DNS, and per-switch settings with automatic rollback"

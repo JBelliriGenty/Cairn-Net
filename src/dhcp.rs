@@ -178,21 +178,28 @@ pub fn lease_name(host: &str) -> Option<String> {
 
 /// "IP name" lines, sorted, one per name. Name of a lease: the one set by
 /// hand for its MAC (`manual`, upper-case MAC -> name), else its reservation
-/// ("ansible: NAME" comment), else the client's host-name.
-pub fn names_file(leases: &[Value], servers: &[String], manual: &BTreeMap<String, String>) -> Vec<(String, String)> {
-    let mut seen = std::collections::BTreeSet::new();
+/// ("ansible: NAME" comment), else its Bonjour name (`bonjour`, same keys),
+/// else the client's host-name. A name taken by a lower IP gets -2, -3...
+pub fn names_file(leases: &[Value], servers: &[String], manual: &BTreeMap<String, String>, bonjour: &BTreeMap<String, String>) -> Vec<(String, String)> {
     let name = |l: &Value| {
         let mac = l["mac-address"].as_str().unwrap_or("").to_uppercase();
         let resa = l["comment"].as_str().and_then(|c| c.strip_prefix("ansible:"));
-        [manual.get(&mac).map(String::as_str), resa, l["host-name"].as_str()].into_iter().flatten().find_map(lease_name)
+        [manual.get(&mac).map(String::as_str), resa, bonjour.get(&mac).map(String::as_str), l["host-name"].as_str()]
+            .into_iter().flatten().find_map(lease_name)
     };
-    let mut out: Vec<(String, String)> = leases.iter()
+    let mut out: Vec<(Ipv4Addr, String)> = leases.iter()
         .filter(|l| (servers.is_empty() || servers.iter().any(|s| l["server"] == s.as_str())) && l["status"] == "bound")
-        .filter_map(|l| Some((l["address"].as_str()?.to_string(), name(l)?)))
+        .filter_map(|l| Some((l["address"].as_str()?.parse().ok()?, name(l)?)))
         .collect();
     out.sort();
-    out.retain(|(_, n)| seen.insert(n.clone()));
-    out
+    let mut seen = std::collections::BTreeSet::new();
+    out.into_iter().filter_map(|(ip, n)| {
+        let n = (1..).map(|i| if i == 1 { n.clone() } else { format!("{n}-{i}") }).find(|c| !seen.contains(c))?;
+        is_name(&n).then(|| {
+            seen.insert(n.clone());
+            (ip.to_string(), n)
+        })
+    }).collect()
 }
 
 pub fn to_json(e: &Entry) -> Value {
@@ -246,17 +253,21 @@ mod tests {
         let l = |ip: &str, h: &str, st: &str| json!({"server": "lan", "status": st, "address": ip, "host-name": h});
         let n = names_file(&[l("192.168.1.130", "Phone-of-Alex", "bound"), l("192.168.1.131", "Smart Plug_2", "bound"),
             l("192.168.1.132", "Old", "waiting"), l("192.168.1.133", "phone-of-alex", "bound"), l("192.168.1.134", "***", "bound")],
-            &["lan".into()], &BTreeMap::new());
+            &["lan".into()], &BTreeMap::new(), &BTreeMap::new());
         let p = |ip: &str, n: &str| (ip.to_string(), n.to_string());
-        assert_eq!(n, vec![p("192.168.1.130", "phone-of-alex"), p("192.168.1.131", "smart-plug-2")]);
+        assert_eq!(n, vec![p("192.168.1.130", "phone-of-alex"), p("192.168.1.131", "smart-plug-2"), p("192.168.1.133", "phone-of-alex-2")]);
     }
 
     #[test]
-    fn manual_then_reservation_then_host_name() {
+    fn manual_then_reservation_then_bonjour_then_host_name() {
         let l = |ip: &str, mac: &str, h: &str, c: &str| json!({"server": "lan", "status": "bound", "address": ip, "mac-address": mac, "host-name": h, "comment": c});
         let manual = BTreeMap::from([("AA:BB:CC:DD:EE:01".to_string(), "Mac de Léa".to_string())]);
-        let n = names_file(&[l("10.0.0.1", "aa:bb:cc:dd:ee:01", "Mac", ""), l("10.0.0.2", "AA:BB:CC:DD:EE:02", "ESP_A1C048", "ansible: ZENGGE"),
-            l("10.0.0.3", "AA:BB:CC:DD:EE:03", "", "")], &[], &manual);
-        assert_eq!(n, vec![("10.0.0.1".to_string(), "mac-de-lea".to_string()), ("10.0.0.2".to_string(), "zengge".to_string())]);
+        let bonjour = BTreeMap::from([("AA:BB:CC:DD:EE:01".to_string(), "Ignored".to_string()), ("AA:BB:CC:DD:EE:04".to_string(), "MacBook-Pro-de-Leo".to_string())]);
+        let n = names_file(&[l("10.0.0.1", "aa:bb:cc:dd:ee:01", "Mac", ""), l("10.0.0.2", "AA:BB:CC:DD:EE:02", "ESP_123456", "ansible: LIGHTS"),
+            l("10.0.0.3", "AA:BB:CC:DD:EE:03", "", ""), l("10.0.0.4", "AA:BB:CC:DD:EE:04", "Mac", ""),
+            l("10.0.0.10", "AA:BB:CC:DD:EE:10", "Mac", ""), l("10.0.0.9", "AA:BB:CC:DD:EE:09", "Mac", "")], &[], &manual, &bonjour);
+        let p = |ip: &str, n: &str| (ip.to_string(), n.to_string());
+        assert_eq!(n, vec![p("10.0.0.1", "mac-de-lea"), p("10.0.0.2", "lights"), p("10.0.0.4", "macbook-pro-de-leo"),
+            p("10.0.0.9", "mac"), p("10.0.0.10", "mac-2")], "numbered in IP order, not text order");
     }
 }
