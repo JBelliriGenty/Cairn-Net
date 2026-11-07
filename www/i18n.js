@@ -226,7 +226,7 @@ const DICT = {
     "Infrastructure": "Infrastructure", "System": "Système", "Identity": "Identité", "Architecture": "Architecture", "Update": "Mise à jour",
     "{v} available": "{v} disponible", "up to date": "à jour", "not checked": "non vérifiée", "Routing and DNS": "Routage et DNS",
     "inactive": "inactive", "none": "aucune", "Gateway (DHCP client)": "Passerelle (client DHCP)", "DNS servers": "Serveurs DNS",
-    "DNS from DHCP": "DNS reçus par DHCP", "Answers DNS for the network": "Répond au DNS du réseau", "yes": "oui", "no": "non",
+    "DNS from DHCP": "DNS reçus par DHCP", "Answers DNS for the network": "Répond au DNS du réseau", "Resolves names": "Résout les noms", "not checked yet": "pas encore vérifié", "no answer": "pas de réponse", "yes": "oui", "no": "non",
     "NAT": "NAT", "{n} rule": "{n} règle", "{n} rules": "{n} règles", "Addresses": "Adresses", "Bridges and ports": "Ponts et ports",
     "Origin": "Origine", "active": "active", "invalid": "invalide", "VLAN {id} on {iface}": "VLAN {id} sur {iface}",
     "Cairn Net's path": "chemin de Cairn Net", "DHCP client": "client DHCP", "static": "statique", "No IP address.": "Aucune adresse IP.",

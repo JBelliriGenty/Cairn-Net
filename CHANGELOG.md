@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 (2026-11-07)
+
+- `export_token_file`: a second bearer token that opens `GET /api/export` only
+  (switches, links, devices as the Topology page reads them), for read-only
+  aggregators such as Cairn Map. Separate from the dashboards' summary token.
+- Switch DNS check: every 10 minutes each switch is asked to resolve
+  `upgrade.mikrotik.com` with the read account; shown on the
+  Infrastructure page ("Resolves names") and notified when it changes.
+  A stale `/ip dns servers` breaks NTP by name and the update check while
+  the clients, served by DHCP, see nothing.
+
 ## 0.3.4 (2026-11-07)
 
 - Bonjour names are kept in `data_dir/bonjour.json`: a device asleep keeps

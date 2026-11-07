@@ -1189,6 +1189,8 @@ function renderInfra() {
       ...dynGw.map(g => [t("Gateway (DHCP client)"), g.gateway]),
       [t("DNS servers"), dnsOf(v).join(", ") || "—"], ...(dns["dynamic-servers"] ? [[t("DNS from DHCP"), list(dns["dynamic-servers"]).join(", ")]] : []),
       [t("Answers DNS for the network"), yes(dns["allow-remote-requests"]) ? t("yes") : t("no")],
+      v.resolve ? [t("Resolves names"), v.resolve.ok ? t("yes") + " · " + v.resolve.answer : t("no") + " · " + t(v.resolve.error), v.resolve.ok ? "" : "warn"]
+        : [t("Resolves names"), t("not checked yet")],
       [t("NAT"), nat.length ? tp(nat.length, "{n} rule", "{n} rules") : t("none")],
     ]) + "</article>" +
     '<article class="card srv"><div class="card-head"><h3>' + esc(t("Admin access")) + "</h3>" +

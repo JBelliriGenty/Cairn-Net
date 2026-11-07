@@ -20,6 +20,27 @@ pub const ROLLBACK: &str = "cairn-net-rollback";
 pub const ROLLBACK_S: u64 = 60;
 
 /// Everything the page shows, read with the read account.
+/// The name a switch is asked to resolve: MikroTik's own update server.
+pub const RESOLVE_NAME: &str = "upgrade.mikrotik.com";
+
+/// Can the switch resolve a name itself? Its NTP servers by name and its
+/// update check depend on it, the clients do not (they get their DNS by
+/// DHCP), so a stale `/ip dns servers` goes unnoticed. Ok(address) or Err(why).
+pub fn resolves(api: &mut Api) -> Result<String, String> {
+    let script = format!(":do {{ :put [:resolve {RESOLVE_NAME}] }} on-error={{ :put \"no answer\" }}");
+    let (_, done) = api.call_done(&["/execute", &format!("=script={script}"), "=as-string="])?;
+    resolve_answer(done.get("ret").and_then(Value::as_str).unwrap_or(""))
+}
+
+fn resolve_answer(out: &str) -> Result<String, String> {
+    let out = out.trim();
+    if out.parse::<std::net::IpAddr>().is_ok() {
+        Ok(out.to_string())
+    } else {
+        Err(if out.is_empty() { "no answer".into() } else { out.to_string() })
+    }
+}
+
 pub fn read(api: &mut Api) -> Result<Value, String> {
     Ok(json!({
         "identity": print(api, "/system/identity", "name", &[])?.pop().map(|v| v["name"].clone()),
@@ -503,6 +524,14 @@ pub fn show_all(cmds: &[Cmd]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_answers() {
+        assert_eq!(resolve_answer("159.148.147.251
+"), Ok("159.148.147.251".into()));
+        assert_eq!(resolve_answer("no answer"), Err("no answer".into()));
+        assert_eq!(resolve_answer(""), Err("no answer".into()));
+    }
 
     fn live() -> Value {
         json!({

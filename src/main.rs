@@ -79,6 +79,7 @@ struct Config {
     dhcp: Option<Dhcp>,
     notify: Option<Notify>,
     summary_token: Option<String>, // bearer token for GET /api/summary only (dashboards)
+    export_token: Option<String>,  // bearer token for GET /api/export only (read-only aggregators: Cairn Map)
     public: Value, // what /api/config returns
 }
 
@@ -177,14 +178,20 @@ impl Config {
                 url: u.to_string(),
                 headers_file: v["notify"]["headers_file"].as_str().unwrap_or("").to_string(),
             }),
-            summary_token: v["summary_token_file"].as_str().map(|f| {
-                let t = fs::read_to_string(f).expect("summary_token_file unreadable").trim().to_string();
-                assert!(t.len() >= 32, "summary_token_file: token shorter than 32 characters");
-                t
-            }),
+            summary_token: token_file(&v, "summary_token_file"),
+            export_token: token_file(&v, "export_token_file"),
             public,
         }
     }
+}
+
+/// A bearer token read from the file named by `key`, at least 32 characters.
+fn token_file(v: &Value, key: &str) -> Option<String> {
+    v[key].as_str().map(|f| {
+        let t = fs::read_to_string(f).unwrap_or_else(|_| panic!("{key} unreadable")).trim().to_string();
+        assert!(t.len() >= 32, "{key}: token shorter than 32 characters");
+        t
+    })
 }
 
 /* ---------- RouterOS API (https://help.mikrotik.com/docs/display/ROS/API) ---------- */
@@ -761,6 +768,7 @@ fn infra_view(name: &str) -> Value {
         v["newest"] = json!(infra::newest(v["update"]["channel"].as_str().unwrap_or("stable")));
     }
     reboot_state(&sw.cfg.name, &mut v);
+    v["resolve"] = RESOLVE.lock().unwrap_or_else(|e| e.into_inner()).get(&sw.cfg.name).cloned().unwrap_or(Value::Null);
     v["name"] = json!(sw.cfg.name);
     v["mode"] = json!(sw.cfg.mode);
     v["infra_nat"] = json!(sw.cfg.infra_nat);
@@ -1181,6 +1189,40 @@ fn firewall_import(v: &Value, user: &str, author: &str) -> Result<Value, String>
     Ok(json!({"ok": true, "commit": sha}))
 }
 
+/// Last resolve check per switch: {"ok", "answer" | "error", "t"}.
+static RESOLVE: Mutex<BTreeMap<String, Value>> = Mutex::new(BTreeMap::new());
+
+/// Every 10 minutes (first right away): can each switch resolve a name?
+/// Its own connection, as a failing lookup takes ~10 s. Notified when it
+/// changes (a first check that works says nothing).
+fn resolve_watch(notify: Option<&'static Notify>) {
+    std::thread::spawn(move || loop {
+        for sw in settings::all() {
+            let c = &sw.cfg;
+            let Ok(mut api) = Api::connect(c, &c.user, &c.password) else { continue }; // unreachable: other pages say so
+            let r = infra::resolves(&mut api);
+            let v = match &r {
+                Ok(ip) => json!({"ok": true, "answer": ip, "t": now_ms()}),
+                Err(e) => json!({"ok": false, "error": e, "t": now_ms()}),
+            };
+            let before = RESOLVE.lock().unwrap_or_else(|e| e.into_inner()).insert(c.name.clone(), v).map(|p| p["ok"] == true);
+            let ok = r.is_ok();
+            if before == Some(ok) || (before.is_none() && ok) {
+                continue;
+            }
+            let msg = match r {
+                Ok(ip) => format!("{}: resolves names again ({} = {ip}).", c.name, infra::RESOLVE_NAME),
+                Err(e) => format!("{}: cannot resolve {} ({e}). Check its DNS servers (Cairn Net, Infrastructure): NTP by name and the update check need them.", c.name, infra::RESOLVE_NAME),
+            };
+            eprintln!("resolve: {msg}");
+            if let Some(n) = notify {
+                n.send("Cairn Net: switch DNS", &msg);
+            }
+        }
+        std::thread::sleep(Duration::from_secs(600));
+    });
+}
+
 /// Every 10 minutes: git-mode firewalls that differ from their file (not
 /// while a change waits for its confirmation), notified when that changes.
 fn drift_watch(notify: Option<&'static Notify>) {
@@ -1397,6 +1439,12 @@ fn handle(cfg: &'static Config, mut r: Request) {
             return respond(r, 200, summary().to_string(), "application/json");
         }
     }
+    // read-only export (switches, links, devices) for aggregators such as Cairn Map
+    if let (Some(t), Method::Get, "/api/export") = (&cfg.export_token, r.method(), path.as_str()) {
+        if header(&r, "Authorization").strip_prefix("Bearer ").is_some_and(|b| ct_eq(b, t)) {
+            return respond(r, 200, slow(), "application/json");
+        }
+    }
     if let Some(l) = &cfg.login {
         // signed out: the page itself loads and shows the sign-in form
         match (r.method().clone(), path.as_str()) {
@@ -1603,6 +1651,7 @@ fn main() {
     .expect("cannot listen");
     eprintln!("cairn-net listening on {}", cfg.listen);
     drift_watch(cfg.notify.as_ref());
+    resolve_watch(cfg.notify.as_ref());
     // DNS integrations: every 2 minutes, from the shared read of the switches
     std::thread::spawn(|| loop {
         std::thread::sleep(Duration::from_secs(20));
