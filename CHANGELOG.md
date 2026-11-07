@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2 (2026-11-07)
+
+- Git mode: a `.git/index.lock` left by a restart in the middle of a Git
+  command no longer blocks the switch's repository ("file unreadable").
+
+## 0.3.1 (2026-11-07)
+
+- DNS names of the leases: a name set by hand on the Devices page now wins,
+  then the reservation name, then the client's host-name; names with spaces
+  or accents become valid labels ("Meross Smart Plug" -> meross-smart-plug)
+  instead of being dropped.
+
 ## 0.3.0 (2026-11-07)
 
 - `GET /api/summary` for dashboards such as Homepage, opened by a bearer

@@ -33,7 +33,7 @@ pub fn target_ok(t: &str) -> bool {
 pub fn names(router: &Value, servers: &[String]) -> Vec<(String, String, String)> {
     let leases = router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let nets = router["dhcp_networks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-    dhcp::names_file(leases, servers).into_iter().map(|(ip, n)| {
+    dhcp::names_file(leases, servers, &crate::topo::manual_names()).into_iter().map(|(ip, n)| {
         let dom = ip.parse().ok().and_then(|a| nets.iter().find(|x| dhcp::in_net(a, x["address"].as_str().unwrap_or(""))))
             .and_then(|x| x["domain"].as_str()).unwrap_or("").to_string();
         (ip, n, dom)

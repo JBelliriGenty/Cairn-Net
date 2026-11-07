@@ -388,6 +388,11 @@ pub fn kinds() -> Value {
     json!(labels())
 }
 
+/// MAC -> name set by hand, for the DNS names of the leases.
+pub fn manual_names() -> BTreeMap<String, String> {
+    labels().into_iter().filter_map(|(m, v)| Some((m, v["name"].as_str()?.to_string()))).collect()
+}
+
 fn is_mac(m: &str) -> bool {
     m.len() == 17 && m.split(':').count() == 6 && m.split(':').all(|x| x.len() == 2 && x.chars().all(|c| c.is_ascii_hexdigit()))
 }

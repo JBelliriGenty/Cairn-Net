@@ -150,20 +150,45 @@ pub fn apply(text: &str, changes: &[Value]) -> Result<String, String> {
     Ok(out)
 }
 
-/// The name a bound lease publishes in the local DNS:
-/// the client's host-name in lower case, kept only if it is a valid label.
-/// (a DNS server may drop names it already has records for).
+/// A name as a DNS label: lower case, common accents dropped, any other
+/// character run becomes one dash ("Meross Smart Plug" -> meross-smart-plug);
+/// None when nothing valid is left (a DNS server may drop names it already
+/// has records for).
 pub fn lease_name(host: &str) -> Option<String> {
-    let n = host.trim().to_lowercase();
+    let mut n = String::new();
+    for c in host.trim().to_lowercase().chars() {
+        let c = match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            c => c,
+        };
+        if c.is_ascii_alphanumeric() {
+            n.push(c);
+        } else if !n.is_empty() && !n.ends_with('-') {
+            n.push('-');
+        }
+    }
+    let n = n.trim_end_matches('-').to_string();
     is_name(&n).then_some(n)
 }
 
-/// "IP name" lines, sorted, one per name.
-pub fn names_file(leases: &[Value], servers: &[String]) -> Vec<(String, String)> {
+/// "IP name" lines, sorted, one per name. Name of a lease: the one set by
+/// hand for its MAC (`manual`, upper-case MAC -> name), else its reservation
+/// ("ansible: NAME" comment), else the client's host-name.
+pub fn names_file(leases: &[Value], servers: &[String], manual: &BTreeMap<String, String>) -> Vec<(String, String)> {
     let mut seen = std::collections::BTreeSet::new();
+    let name = |l: &Value| {
+        let mac = l["mac-address"].as_str().unwrap_or("").to_uppercase();
+        let resa = l["comment"].as_str().and_then(|c| c.strip_prefix("ansible:"));
+        [manual.get(&mac).map(String::as_str), resa, l["host-name"].as_str()].into_iter().flatten().find_map(lease_name)
+    };
     let mut out: Vec<(String, String)> = leases.iter()
         .filter(|l| (servers.is_empty() || servers.iter().any(|s| l["server"] == s.as_str())) && l["status"] == "bound")
-        .filter_map(|l| Some((l["address"].as_str()?.to_string(), lease_name(l["host-name"].as_str()?)?)))
+        .filter_map(|l| Some((l["address"].as_str()?.to_string(), name(l)?)))
         .collect();
     out.sort();
     out.retain(|(_, n)| seen.insert(n.clone()));
@@ -219,8 +244,19 @@ mod tests {
     #[test]
     fn lease_names_follow_the_timer_rules() {
         let l = |ip: &str, h: &str, st: &str| json!({"server": "lan", "status": st, "address": ip, "host-name": h});
-        let n = names_file(&[l("192.168.1.130", "Phone-of-Alex", "bound"), l("192.168.1.131", "bad name", "bound"),
-            l("192.168.1.132", "Old", "waiting"), l("192.168.1.133", "phone-of-alex", "bound")], &["lan".into()]);
-        assert_eq!(n, vec![("192.168.1.130".to_string(), "phone-of-alex".to_string())]);
+        let n = names_file(&[l("192.168.1.130", "Phone-of-Alex", "bound"), l("192.168.1.131", "Smart Plug_2", "bound"),
+            l("192.168.1.132", "Old", "waiting"), l("192.168.1.133", "phone-of-alex", "bound"), l("192.168.1.134", "***", "bound")],
+            &["lan".into()], &BTreeMap::new());
+        let p = |ip: &str, n: &str| (ip.to_string(), n.to_string());
+        assert_eq!(n, vec![p("192.168.1.130", "phone-of-alex"), p("192.168.1.131", "smart-plug-2")]);
+    }
+
+    #[test]
+    fn manual_then_reservation_then_host_name() {
+        let l = |ip: &str, mac: &str, h: &str, c: &str| json!({"server": "lan", "status": "bound", "address": ip, "mac-address": mac, "host-name": h, "comment": c});
+        let manual = BTreeMap::from([("AA:BB:CC:DD:EE:01".to_string(), "Mac de Léa".to_string())]);
+        let n = names_file(&[l("10.0.0.1", "aa:bb:cc:dd:ee:01", "Mac", ""), l("10.0.0.2", "AA:BB:CC:DD:EE:02", "ESP_A1C048", "ansible: ZENGGE"),
+            l("10.0.0.3", "AA:BB:CC:DD:EE:03", "", "")], &[], &manual);
+        assert_eq!(n, vec![("10.0.0.1".to_string(), "mac-de-lea".to_string()), ("10.0.0.2".to_string(), "zengge".to_string())]);
     }
 }

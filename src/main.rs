@@ -575,7 +575,7 @@ fn dhcp_view(src: &Src) -> Value {
     let dns_cfg = settings::get(&name).map(|sw| sw.cfg.clone()).filter(|c| c.dns != "none");
     let names: Vec<(String, String)> = match (&dns_cfg, src) {
         (Some(c), _) => dns::names(&router, &c.dns_servers).into_iter().map(|(ip, n, _)| (ip, n)).collect(),
-        (None, Src::File(d) | Src::Git(_, Some(d))) => dhcp::names_file(router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]), &[d.server.clone()]),
+        (None, Src::File(d) | Src::Git(_, Some(d))) => dhcp::names_file(router["leases"].as_array().map(Vec::as_slice).unwrap_or(&[]), &[d.server.clone()], &topo::manual_names()),
         _ => vec![],
     };
     json!({

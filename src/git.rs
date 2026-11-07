@@ -77,6 +77,8 @@ pub fn probe(sw: &SwitchCfg) -> Result<(), String> {
 /// The clone at the tip of the branch (at most one fetch per 30 s unless `force`).
 fn sync(sw: &SwitchCfg, force: bool) -> Result<PathBuf, String> {
     let d = dir(sw);
+    // callers hold LOCK and the clone is ours alone: an index.lock here was left by a run killed mid-git (restart)
+    let _ = fs::remove_file(d.join(".git/index.lock"));
     let mut seen = SYNCED.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|e| e.into_inner());
     let fresh = seen.get(&sw.name).is_some_and(|t| t.elapsed() < Duration::from_secs(30));
     let origin = if d.join(".git").exists() { git(Some(&d), &["remote", "get-url", "origin"]).ok() } else { None };
