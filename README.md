@@ -163,6 +163,10 @@ Two ways, set in `config.json`:
 
 ## Configuration
 
+Every key, its type and default, the switch fields of `settings.json`, the
+files Cairn Net writes and short recipes:
+[docs/configuration.md](docs/configuration.md).
+
 `config.json`:
 
 | Key | Default | |
