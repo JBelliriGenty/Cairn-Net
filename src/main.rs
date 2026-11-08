@@ -1713,6 +1713,15 @@ mod tests {
         assert!(missing.is_empty(), "config keys missing from docs/configuration.md: {missing:?}");
     }
 
+    /// The values the settings and kinds files accept are in docs/configuration.md too.
+    #[test]
+    fn setting_values_documented() {
+        let doc = include_str!("../docs/configuration.md");
+        let missing: Vec<&str> = topo::KINDS.iter().chain(dns::KINDS.iter()).copied()
+            .filter(|k| !doc.contains(&format!("`{k}`")) && !doc.contains(&format!("`\"{k}\"`"))).collect();
+        assert!(missing.is_empty(), "values missing from docs/configuration.md: {missing:?}");
+    }
+
     #[test]
     fn length_prefix_round_trip() {
         for n in [0usize, 1, 0x7f, 0x80, 0x3fff, 0x4000, 0x1f_ffff, 0x20_0000, 0x0fff_ffff, 0x1000_0000] {
