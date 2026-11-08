@@ -42,7 +42,7 @@ it cannot write.
 | `lang` | `"en"` \| `"fr"` | the browser's language, else `"en"` | each viewer can switch |
 | `data_dir` | path | `"/var/lib/cairn-net"` | must be writable, see [Files written by Cairn Net](#files-written-by-cairn-net) |
 | `login` | object | none | built-in sign-in, see [`login`](#login); needs `tls` |
-| `tls` | `{"cert", "key"}` | none | PEM files; both set: HTTPS, else plain HTTP |
+| `tls` | `{"cert", "key"}` | none | PEM files `cert` and `key`; both set: HTTPS, else plain HTTP |
 | `trusted_proxies` | list of IPs | `[]` | proxy mode: only these exact addresses (no CIDR) may connect |
 | `user_header` | string | `"Remote-User"` | proxy mode: the signed-in user |
 | `groups_header` | string | `"Remote-Groups"` | proxy mode: comma-separated groups |
