@@ -150,6 +150,9 @@ function model() {
     const ifaces = f.ifaces || [];
     const mon = Object.fromEntries((s.monitor || []).map(m => [m.name, m]));
     const bridgePort = Object.fromEntries((s.ports || []).map(p => [p.interface, p]));
+    // MSTP: a port blocked for the common tree but forwarding in another instance (VLAN 99 on
+    // the management links) is in service, not in reserve.
+    const mstFwd = new Set((s.msti || []).filter(m => m.forwarding === "true").map(m => m.interface));
     const bondOf = {};
     for (const b of s.bonds || []) for (const sl of list(b.slaves)) bondOf[sl] = b.name;
     // Inter-switch links: interfaces where a MikroTik neighbour answers (port, its bond).
@@ -169,7 +172,7 @@ function model() {
       return {
         name: i.name, comment: i.comment, running: yes(i.running), disabled: yes(i.disabled), linkDowns: num(i["link-downs"]),
         rate: (mon[i.name] || {}).rate, mon: mon[i.name] || {}, bond: bondOf[i.name], uplink: uplinks.has(i.name) || uplinks.has(via),
-        pvid: bp && bp.pvid, fwd: bp && bp.forwarding, role: bp && bp.role, tagged: vlans.filter(v => v.tagged.includes(via)).map(v => v.ids), neighbor: neighborOf[i.name],
+        pvid: bp && bp.pvid, fwd: bp && (mstFwd.has(via) ? "true" : bp.forwarding), role: bp && bp.role, tagged: vlans.filter(v => v.tagged.includes(via)).map(v => v.ids), neighbor: neighborOf[i.name],
         rx: (rates[c.name + "|" + i.name] || {}).rx || 0, tx: (rates[c.name + "|" + i.name] || {}).tx || 0,
       };
     });
@@ -469,7 +472,11 @@ function links(sws) {
     const upn = members.filter(n => port(s, n).running).length;
     const speed = members.map(n => port(s, n).rate).filter(Boolean);
     const blocked = upn > 0 && (members.every(n => port(s, n).fwd === "false") || remote.every(n => port(o, n).fwd === "false"));
-    return { s, o, L, l: { peer: L.b, via: L.a_via }, b, members, remote, upn, speed,
+    // Access link: one untagged VLAN and nothing tagged at both ends (switch management cables).
+    const ends = members.map(n => port(s, n)).concat(remote.map(n => port(o, n)));
+    const acc = ends.every(p => p.pvid && p.pvid === ends[0].pvid && !(p.tagged || []).length) ? ends[0].pvid : null;
+    const vc = acc && (s.vlans.find(v => v.ids === acc && v.comment) || {}).comment;
+    return { s, o, L, l: { peer: L.b, via: L.a_via }, b, members, remote, upn, speed, acc: acc && (vc ? acc + " · " + vc : acc),
       lv: blocked ? "standby" : upn === members.length ? "ok" : upn ? "warn" : "bad" };
   }).filter(Boolean);
 }
@@ -505,8 +512,9 @@ function renderOverview(sws) {
         t("up for {d}", { d: duration(rosSeconds(s.r.uptime)) })].filter(Boolean).join(" · ")) + "</p>");
   }).join("");
 
-  const rows = lk.map(({ s, l, b, members, remote, upn, speed, lv }) =>
+  const rows = lk.map(({ s, l, b, members, remote, upn, speed, lv, acc }) =>
       "<tr><td><b>" + esc(s.name) + "</b> ⇄ <b>" + esc(l.peer) + "</b></td><td>" + esc(b ? t("{bond} (LACP)", { bond: b.name }) : short(l.via)) +
+        (acc ? ' <span class="pill">' + esc(t("access, VLAN {v}", { v: acc })) + "</span>" : "") +
         "</td><td>" + esc(members.map(short).join(", ") + " ⇄ " + remote.map(short).join(", ")) + "</td><td>" + esc(speed.length ? speed.length + " × " + speed[0] : "") +
         '</td><td><span class="pill ' + lv + '">' + (lv === "standby" ? t("blocked by STP") : t("{up} / {total} up", { up: upn, total: members.length })) + "</span></td>" +
         '<td class="num">' + bits(members.reduce((a, n) => a + ((rates[s.name + "|" + n] || {}).rx || 0) + ((rates[s.name + "|" + n] || {}).tx || 0), 0)) + "</td></tr>");

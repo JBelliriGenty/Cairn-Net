@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.3 (2026-11-10)
+
+- Devices: every interface MAC of the switches is left out, not only the one
+  each announces. A port blocked by STP is still learned by the switch
+  across, and showed up as an unknown device.
+
+## 0.5.2 (2026-11-10)
+
+- Links between switches: a neighbour heard through a VLAN interface (an
+  `mgmt99` announcing itself out of an access port) is no longer a link of
+  its own; only cables with an Ethernet port at both ends are kept.
+- An access link (one untagged VLAN, nothing tagged at both ends, such as
+  the switches' management cables) is labelled "access, VLAN n" with the
+  VLAN's comment.
+
+## 0.5.1 (2026-11-10)
+
+- MSTP: each switch's port states in the extra instances are read
+  (`/interface/bridge/port/mst-override/monitor`, `msti` in the state). A link
+  blocked for the common tree but forwarding in its own instance (management
+  VLAN on dedicated links) is shown in service, no longer "standby (STP)".
+
 ## 0.5.0 (2026-11-07)
 
 - `GET /api/export` also carries each switch's live state, as `/api/fast`

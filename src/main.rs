@@ -381,10 +381,13 @@ fn slow_one(api: &mut Api) -> Result<Value, String> {
         "routerboard": print(api, "/system/routerboard", "model,serial-number,current-firmware,upgrade-firmware", &[])?.pop(),
         "monitor": monitor,
         "ports": print(api, "/interface/bridge/port", "interface,pvid,status,role,edge-port,forwarding,comment", &[])?,
+        "msti": msti_ports(api).unwrap_or_default(),
         "vlans": print(api, "/interface/bridge/vlan", "vlan-ids,current-tagged,current-untagged,comment,dynamic", &[])?,
         "bonds": print(api, "/interface/bonding", "name,slaves,mode,running,comment", &[])?,
         "neighbors": print(api, "/ip/neighbor", "interface,identity,address,mac-address,board,platform,interface-name,system-caps,system-caps-enabled", &[])?,
         "hosts": print(api, "/interface/bridge/host", "mac-address,on-interface,vid", &["?local=false"])?,
+        // every interface's own MAC: a port blocked by STP is still learned on the other side, it is not a device
+        "own_macs": print(api, "/interface", "mac-address", &[])?,
         "leases": print(api, "/ip/dhcp-server/lease", "address,mac-address,host-name,comment,status,server,dynamic,last-seen,expires-after", &[])?,
         "dhcp_servers": print(api, "/ip/dhcp-server", "name,disabled,invalid,address-pool,interface,lease-time,authoritative,comment", &[])?,
         "dhcp_networks": print(api, "/ip/dhcp-server/network", "address,gateway,dns-server,domain,ntp-server,dhcp-option,comment", &[])?,
@@ -395,6 +398,22 @@ fn slow_one(api: &mut Api) -> Result<Value, String> {
         "pools": print(api, "/ip/pool", "name,ranges", &[])?,
         "arp": print(api, "/ip/arp", "address,mac-address,interface", &["?complete=true"])?,
     }))
+}
+
+/// MSTP: each port's state in the extra instances (a port can be blocked for the
+/// common tree yet forward a VLAN mapped to its own instance, e.g. management on
+/// dedicated links). Empty on an RSTP bridge.
+fn msti_ports(api: &mut Api) -> Result<Vec<Value>, String> {
+    let rows: Vec<Value> = print(api, "/interface/bridge/port/mst-override", ".id,interface,identifier", &[])?
+        .into_iter().filter(|r| r["identifier"].as_str().is_some_and(|i| i != "0")).collect();
+    let ids: Vec<&str> = rows.iter().filter_map(|r| r[".id"].as_str()).collect();
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let numbers = format!("=numbers={}", ids.join(","));
+    let mon = api.call(&["/interface/bridge/port/mst-override/monitor", &numbers, "=once="])?;
+    Ok(rows.iter().zip(mon).map(|(r, m)| json!({"interface": r["interface"], "identifier": r["identifier"],
+        "role": m.get("role"), "forwarding": m.get("forwarding")})).collect())
 }
 
 /// This host's own ARP table (it talks to most of the LAN: monitoring pings).

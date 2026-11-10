@@ -72,7 +72,8 @@ fn direct(sws: &[Sw]) -> Vec<Seen> {
             let Some(&b) = idx.get(s(n, "identity")) else { continue };
             let port = list(s(n, "interface")).first().copied().unwrap_or("");
             let rport = s(n, "interface-name").rsplit('/').next().unwrap_or("");
-            if b == a || !w.is_eth(port) || rport.is_empty() {
+            // a VLAN interface (mgmt99) announcing itself through an access port is not a cable end
+            if b == a || !w.is_eth(port) || rport.is_empty() || !sws[b].is_eth(rport) {
                 continue;
             }
             let e = Seen { a, port: port.into(), b, rport: rport.into() };
@@ -243,9 +244,10 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
         }
     }
 
-    // the switches' own MACs (their announcements) are not devices
+    // the switches' own MACs (their announcements, and every port's: a port blocked by STP still shows on the other side) are not devices
     let names_sw: BTreeSet<&str> = sws.iter().map(|w| w.name).collect();
-    let mut switch_macs: BTreeSet<String> = BTreeSet::new();
+    let mut switch_macs: BTreeSet<String> =
+        sws.iter().flat_map(|w| rows(w.v, "own_macs")).map(|f| up(s(f, "mac-address"))).filter(|m| !m.is_empty()).collect();
     let mut announced: BTreeMap<String, (usize, String, &Value)> = BTreeMap::new(); // other neighbours, by MAC
     for (i, w) in sws.iter().enumerate() {
         for n in rows(w.v, "neighbors") {
@@ -479,6 +481,7 @@ mod tests {
             json!({"name": "ACCESS", "monitor": mon(&["sfp1", "sfp2", "ether17", "ether18", "ether19"]),
                 "bonds": [{"name": "bond-core", "slaves": "sfp1,sfp2"}],
                 "neighbors": [nb("ether17,bridge", "EDGE", "bridge/ether9", "02:00:00:00:00:E1"),
+                    nb("ether17,bridge", "EDGE", "mgmt99", "02:00:00:00:00:E1"),
                     nb("ether18,bridge", "CORE", "bridge/ether1", "02:00:00:00:00:C1"),
                     nb("sfp1,bond-core,bridge", "CORE", "bridge/bond-access/sfp3", "02:00:00:00:00:C1"),
                     nb("sfp1,bond-core,bridge", "LAB", "ether1", "02:00:00:00:00:B1"),
@@ -525,6 +528,18 @@ mod tests {
         ]);
         assert_eq!(t["devices"][2]["why"], json!({"by": "vms", "v": 2}));
         assert_eq!(t["devices"][1]["why"], json!({"by": "random"}));
+    }
+
+    #[test]
+    fn switch_port_macs_are_not_devices() {
+        // B's port blocked by STP is learned by A: B's own MAC, not a device
+        let a = json!({"name": "A", "monitor": mon(&["ether1", "ether2"]), "own_macs": [{"mac-address": "D0:00:00:00:00:A1"}],
+            "hosts": [{"mac-address": "D0:00:00:00:00:B9", "on-interface": "ether1", "vid": "99"},
+                      {"mac-address": "AA:00:00:00:00:07", "on-interface": "ether2", "vid": "10"}]});
+        let b = json!({"name": "B", "monitor": mon(&["ether9"]), "own_macs": [{"mac-address": "d0:00:00:00:00:b9"}, {"mac-address": ""}]});
+        let t = build(&[a, b], &[], &BTreeMap::new());
+        let macs: Vec<&str> = t["devices"].as_array().unwrap().iter().map(|d| d["mac"].as_str().unwrap()).collect();
+        assert_eq!(macs, ["AA:00:00:00:00:07"]);
     }
 
     #[test]

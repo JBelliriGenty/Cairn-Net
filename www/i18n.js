@@ -19,7 +19,7 @@ const DICT = {
     "Topology": "Topologie", "Fit": "Ajuster", "Zoom in": "Zoom avant", "Zoom out": "Zoom arrière", "Network topology": "Topologie du réseau",
     "Line thickness and motion follow the traffic; dashed: link down or held by STP. A switch opens its Infrastructure page, a link or a port its Ports view, a device the Devices list; a group of devices folds and unfolds. Drag to move, wheel or pinch to zoom.":
       "Épaisseur et mouvement des lignes suivent le trafic ; pointillés : lien coupé ou tenu en réserve par STP. Un switch ouvre sa page Infrastructure, un lien ou un port sa vue Ports, un appareil la liste Appareils ; un groupe d'appareils se plie et se déplie. Glisser pour déplacer, molette ou pincement pour zoomer.",
-    "{n} link": "{n} liaison", "{n} links": "{n} liaisons", "down": "coupé", "blocked by STP": "en réserve (STP)",
+    "{n} link": "{n} liaison", "{n} links": "{n} liaisons", "down": "coupé", "blocked by STP": "en réserve (STP)", "access, VLAN {v}": "accès, VLAN {v}",
     "{n} device on this port": "{n} appareil sur ce port", "{n} devices on this port": "{n} appareils sur ce port",
     "Kind": "Type", "Router": "Routeur", "Wi-Fi access point": "Borne Wi-Fi", "Server or hypervisor": "Serveur ou hyperviseur",
     "NAS": "NAS", "Computer": "Ordinateur", "Phone": "Téléphone", "Printer": "Imprimante", "Camera": "Caméra", "Connected device": "Objet connecté", "Unknown": "Inconnu",
