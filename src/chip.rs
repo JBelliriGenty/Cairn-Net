@@ -72,7 +72,7 @@ fn yes(v: &str) -> bool {
     v == "true" || v == "yes"
 }
 
-fn all(api: &mut Api, path: &str, query: &[&str]) -> Result<Vec<Value>, String> {
+pub fn all(api: &mut Api, path: &str, query: &[&str]) -> Result<Vec<Value>, String> {
     let cmd = format!("{path}/print");
     let words: Vec<&str> = std::iter::once(cmd.as_str()).chain(query.iter().copied()).collect();
     match api.call(&words) {

@@ -1,0 +1,667 @@
+{
+ "name": "ap-hall",
+ "model": "A42G-HbeP",
+ "wifi": [
+  {
+   ".id": "*2",
+   "name": "mld1",
+   "mac-address": "48:A9:8A:00:10:01",
+   "arp-timeout": "auto",
+   "master": "false",
+   "bound": "false",
+   "inactive": "true",
+   "running": "false",
+   "disabled": "true"
+  },
+  {
+   ".id": "*3",
+   "default-name": "wifi1",
+   "name": "wifi1",
+   "mac-address": "48:A9:8A:00:10:02",
+   "arp-timeout": "auto",
+   "radio-mac": "48:A9:8A:00:10:02",
+   "configuration": "cfg-lan",
+   "configuration.ssid": "Home",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk,wpa3-psk",
+   "datapath.bridge": "bridge",
+   "datapath.vlan-id": "10",
+   "channel.frequency": "2412",
+   "channel.width": "20mhz",
+   "master": "true",
+   "bound": "true",
+   "inactive": "false",
+   "running": "true",
+   "disabled": "false"
+  },
+  {
+   ".id": "*C",
+   "name": "wifi1-guest",
+   "mac-address": "48:A9:8A:00:10:03",
+   "arp-timeout": "auto",
+   "master-interface": "wifi1",
+   "configuration": "cfg-guest",
+   "configuration.ssid": "Guests",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk,wpa3-psk",
+   "datapath.bridge": "bridge",
+   "datapath.client-isolation": "true",
+   "datapath.vlan-id": "30",
+   "master": "false",
+   "bound": "true",
+   "inactive": "false",
+   "running": "false",
+   "disabled": "false"
+  },
+  {
+   ".id": "*B",
+   "name": "wifi1-iot",
+   "mac-address": "48:A9:8A:00:10:04",
+   "arp-timeout": "auto",
+   "master-interface": "wifi1",
+   "configuration": "cfg-iot",
+   "configuration.ssid": "IoT",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk",
+   "datapath.bridge": "bridge",
+   "datapath.vlan-id": "20",
+   "master": "false",
+   "bound": "true",
+   "inactive": "false",
+   "running": "false",
+   "disabled": "false"
+  },
+  {
+   ".id": "*4",
+   "default-name": "wifi2",
+   "name": "wifi2",
+   "mac-address": "48:A9:8A:00:10:05",
+   "arp-timeout": "auto",
+   "radio-mac": "48:A9:8A:00:10:05",
+   "configuration": "cfg-lan",
+   "configuration.ssid": "Home",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk,wpa3-psk",
+   "datapath.bridge": "bridge",
+   "datapath.vlan-id": "10",
+   "channel.frequency": "5180",
+   "channel.width": "20/40mhz",
+   "master": "true",
+   "bound": "true",
+   "inactive": "false",
+   "running": "true",
+   "disabled": "false"
+  },
+  {
+   ".id": "*E",
+   "name": "wifi2-guest",
+   "mac-address": "48:A9:8A:00:10:06",
+   "arp-timeout": "auto",
+   "master-interface": "wifi2",
+   "configuration": "cfg-guest",
+   "configuration.ssid": "Guests",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk,wpa3-psk",
+   "datapath.bridge": "bridge",
+   "datapath.client-isolation": "true",
+   "datapath.vlan-id": "30",
+   "master": "false",
+   "bound": "true",
+   "inactive": "false",
+   "running": "false",
+   "disabled": "false"
+  },
+  {
+   ".id": "*D",
+   "name": "wifi2-iot",
+   "mac-address": "48:A9:8A:00:10:07",
+   "arp-timeout": "auto",
+   "master-interface": "wifi2",
+   "configuration": "cfg-iot",
+   "configuration.ssid": "IoT",
+   "configuration.country": "France",
+   "security.authentication-types": "wpa2-psk",
+   "datapath.bridge": "bridge",
+   "datapath.vlan-id": "20",
+   "master": "false",
+   "bound": "true",
+   "inactive": "false",
+   "running": "false",
+   "disabled": "false"
+  }
+ ],
+ "monitor": [
+  {
+   "state": "running",
+   "channel": "2412/be",
+   "registered-peers": "2",
+   "authorized-peers": "2",
+   "tx-power": "15",
+   "channel-priorities": "0:2412/be,1:2412/ax,2:2412/n,3:2412/g",
+   "name": "wifi1"
+  },
+  {
+   "state": "running",
+   "channel": "2412/be",
+   "registered-peers": "0",
+   "authorized-peers": "0",
+   "tx-power": "15",
+   "name": "wifi1-guest"
+  },
+  {
+   "state": "running",
+   "channel": "2412/be",
+   "registered-peers": "1",
+   "authorized-peers": "0",
+   "tx-power": "15",
+   "name": "wifi1-iot"
+  },
+  {
+   "state": "running",
+   "channel": "5180/be/Ce/I",
+   "registered-peers": "13",
+   "authorized-peers": "13",
+   "tx-power": "23",
+   "channel-priorities": "0:5180/be/Ce/I,1:5180/ax/Ce/I,2:5180/ac/Ce/I,3:5180/n/Ce/I",
+   "name": "wifi2"
+  },
+  {
+   "state": "running",
+   "channel": "5180/be/Ce/I",
+   "registered-peers": "0",
+   "authorized-peers": "0",
+   "tx-power": "23",
+   "name": "wifi2-guest"
+  },
+  {
+   "state": "running",
+   "channel": "5180/be/Ce/I",
+   "registered-peers": "0",
+   "authorized-peers": "0",
+   "tx-power": "23",
+   "name": "wifi2-iot"
+  }
+ ],
+ "radio": [
+  {
+   "interface": "wifi1",
+   "bands": "2ghz-g:20mhz,2ghz-n:20mhz,20/40mhz,2ghz-ax:20mhz,20/40mhz,2ghz-be:20mhz,20/40mhz",
+   "current-max-reg-power": "20",
+   "hw-type": "mt7992",
+   "current-channels": "2412/g,2412/n,2412/ax,2412/be,2412/n/Ce,2412/ax/Ce,2412/be/Ce,2417/g,2417/n,2417/ax,2417/be,2417/n/Ce,2417/ax/Ce,2417/be/Ce,2422/g,2422/n,2422/ax,2422/be,2422/n/Ce,2422/ax/Ce,2422/be/Ce,2427/g,2427/n,2427/ax,2427/be,2427/n/Ce,2427/ax/Ce,2427/be/Ce,2432/g,2432/n,2432/ax,2432/be,2432/n/eC,2432/n/Ce,2432/ax/eC,2432/ax/Ce,2432/be/eC,2432/be/Ce,2437/g,2437/n,2437/ax,2437/be,2437/n/eC,2437/n/Ce,2437/ax/eC,2437/ax/Ce,2437/be/eC,2437/be/Ce,2442/g,2442/n,2442/ax,2442/be,2442/n/eC,2442/n/Ce,2442/ax/eC,2442/ax/Ce,2442/be/eC,2442/be/Ce,2447/g,2447/n,2447/ax,2447/be,2447/n/eC,2447/n/Ce,2447/ax/eC,2447/ax/Ce,2447/be/eC,2447/be/Ce,2452/g,2452/n,2452/ax,2452/be,2452/n/eC,2452/n/Ce,2452/ax/eC,2452/ax/Ce,2452/be/eC,2452/be/Ce,2457/g,2457/n,2457/ax,2457/be,2457/n/eC,2457/ax/eC,2457/be/eC,2462/g,2462/n,2462/ax,2462/be,2462/n/eC,2462/ax/eC,2462/be/eC,2467/g,2467/n,2467/ax,2467/be,2467/n/eC,2467/ax/eC,2467/be/eC,2472/g,2472/n,2472/ax,2472/be,2472/n/eC,2472/ax/eC,2472/be/eC"
+  },
+  {
+   "interface": "wifi2",
+   "bands": "5ghz-a:20mhz,5ghz-n:20mhz,20/40mhz,5ghz-ac:20mhz,20/40mhz,20/40/80mhz,20/40/80/160mhz,5ghz-ax:20mhz,20/40mhz,20/40/80mhz,20/40/80/160mhz,5ghz-be:20mhz,20/40mhz,20/40/80mhz,20/40/80/160mhz",
+   "current-max-reg-power": "26",
+   "hw-type": "mt7992",
+   "current-channels": "5180/a/I,5180/n/I,5180/ac/I,5180/ax/I,5180/be/I,5180/n/Ce/I,5180/ac/Ce/I,5180/ax/Ce/I,5180/be/Ce/I,5180/ac/Ceee/I,5180/ax/Ceee/I,5180/be/Ceee/I,5180/ac/Ceeeeeee/DI,5180/ax/Ceeeeeee/DI,5180/be/Ceeeeeee/DI,5200/a/I,5200/n/I,5200/ac/I,5200/ax/I,5200/be/I,5200/n/eC/I,5200/ac/eC/I,5200/ax/eC/I,5200/be/eC/I,5200/ac/eCee/I,5200/ax/eCee/I,5200/be/eCee/I,5200/ac/eCeeeeee/DI,5200/ax/eCeeeeee/DI,5200/be/eCeeeeee/DI,5220/a/I,5220/n/I,5220/ac/I,5220/ax/I,5220/be/I,5220/n/Ce/I,5220/ac/Ce/I,5220/ax/Ce/I,5220/be/Ce/I,5220/ac/eeCe/I,5220/ax/eeCe/I,5220/be/eeCe/I,5220/ac/eeCeeeee/DI,5220/ax/eeCeeeee/DI,5220/be/eeCeeeee/DI,5240/a/I,5240/n/I,5240/ac/I,5240/ax/I,5240/be/I,5240/n/eC/I,5240/ac/eC/I,5240/ax/eC/I,5240/be/eC/I,5240/ac/eeeC/I,5240/ax/eeeC/I,5240/be/eeeC/I,5240/ac/eeeCeeee/DI,5240/ax/eeeCeeee/DI,5240/be/eeeCeeee/DI,5260/a/DI,5260/n/DI,5260/ac/DI,5260/ax/DI,5260/be/DI,5260/n/Ce/DI,5260/ac/Ce/DI,5260/ax/Ce/DI,5260/be/Ce/DI,5260/ac/Ceee/DI,5260/ax/Ceee/DI,5260/be/Ceee/DI,5260/ac/eeeeCeee/DI,5260/ax/eeeeCeee/DI,5260/be/eeeeCeee/DI,5280/a/DI,5280/n/DI,5280/ac/DI,5280/ax/DI,5280/be/DI,5280/n/eC/DI,5280/ac/eC/DI,5280/ax/eC/DI,5280/be/eC/DI,5280/ac/eCee/DI,5280/ax/eCee/DI,5280/be/eCee/DI,5280/ac/eeeeeCee/DI,5280/ax/eeeeeCee/DI,5280/be/eeeeeCee/DI,5300/a/DI,5300/n/DI,5300/ac/DI,5300/ax/DI,5300/be/DI,5300/n/Ce/DI,5300/ac/Ce/DI,5300/ax/Ce/DI,5300/be/Ce/DI,5300/ac/eeCe/DI,5300/ax/eeCe/DI,5300/be/eeCe/DI,5300/ac/eeeeeeCe/DI,5300/ax/eeeeeeCe/DI,5300/be/eeeeeeCe/DI,5320/a/DI,5320/n/DI,5320/ac/DI,5320/ax/DI,5320/be/DI,5320/n/eC/DI,5320/ac/eC/DI,5320/ax/eC/DI,5320/be/eC/DI,5320/ac/eeeC/DI,5320/ax/eeeC/DI,5320/be/eeeC/DI,5320/ac/eeeeeeeC/DI,5320/ax/eeeeeeeC/DI,5320/be/eeeeeeeC/DI,5340/a/DI,5340/n/DI,5340/ac/DI,5340/ax/DI,5340/be/DI,5480/a/D,5480/n/D,5480/ac/D,5480/ax/D,5480/be/D,5500/a/D,5500/n/D,5500/ac/D,5500/ax/D,5500/be/D,5500/n/Ce/D,5500/ac/Ce/D,5500/ax/Ce/D,5500/be/Ce/D,5500/ac/Ceee/D,5500/ax/Ceee/D,5500/be/Ceee/D,5500/ac/Ceeeeeee/D,5500/ax/Ceeeeeee/D,5500/be/Ceeeeeee/D,5520/a/D,5520/n/D,5520/ac/D,5520/ax/D,5520/be/D,5520/n/eC/D,5520/ac/eC/D,5520/ax/eC/D,5520/be/eC/D,5520/ac/eCee/D,5520/ax/eCee/D,5520/be/eCee/D,5520/ac/eCeeeeee/D,5520/ax/eCeeeeee/D,5520/be/eCeeeeee/D,5540/a/D,5540/n/D,5540/ac/D,5540/ax/D,5540/be/D,5540/n/Ce/D,5540/ac/Ce/D,5540/ax/Ce/D,5540/be/Ce/D,5540/ac/eeCe/D,5540/ax/eeCe/D,5540/be/eeCe/D,5540/ac/eeCeeeee/D,5540/ax/eeCeeeee/D,5540/be/eeCeeeee/D,5560/a/D,5560/n/D,5560/ac/D,5560/ax/D,5560/be/D,5560/n/eC/D,5560/ac/eC/D,5560/ax/eC/D,5560/be/eC/D,5560/ac/eeeC/D,5560/ax/eeeC/D,5560/be/eeeC/D,5560/ac/eeeCeeee/D,5560/ax/eeeCeeee/D,5560/be/eeeCeeee/D,5580/a/D,5580/n/D,5580/ac/D,5580/ax/D,5580/be/D,5580/n/Ce/D,5580/ac/Ce/D,5580/ax/Ce/D,5580/be/Ce/D,5580/ac/Ceee/D,5580/ax/Ceee/D,5580/be/Ceee/D,5580/ac/eeeeCeee/D,5580/ax/eeeeCeee/D,5580/be/eeeeCeee/D,5600/a/D,5600/n/D,5600/ac/D,5600/ax/D,5600/be/D,5600/n/eC/D,5600/ac/eC/D,5600/ax/eC/D,5600/be/eC/D,5600/ac/eCee/D,5600/ax/eCee/D,5600/be/eCee/D,5600/ac/eeeeeCee/D,5600/ax/eeeeeCee/D,5600/be/eeeeeCee/D,5620/a/D,5620/n/D,5620/ac/D,5620/ax/D,5620/be/D,5620/n/Ce/D,5620/ac/Ce/D,5620/ax/Ce/D,5620/be/Ce/D,5620/ac/eeCe/D,5620/ax/eeCe/D,5620/be/eeCe/D,5620/ac/eeeeeeCe/D,5620/ax/eeeeeeCe/D,5620/be/eeeeeeCe/D,5640/a/D,5640/n/D,5640/ac/D,5640/ax/D,5640/be/D,5640/n/eC/D,5640/ac/eC/D,5640/ax/eC/D,5640/be/eC/D,5640/ac/eeeC/D,5640/ax/eeeC/D,5640/be/eeeC/D,5640/ac/eeeeeeeC/D,5640/ax/eeeeeeeC/D,5640/be/eeeeeeeC/D,5660/a/D,5660/n/D,5660/ac/D,5660/ax/D,5660/be/D,5660/n/Ce/D,5660/ac/Ce/D,5660/ax/Ce/D,5660/be/Ce/D,5660/ac/Ceee/D,5660/ax/Ceee/D,5660/be/Ceee/D,5680/a/D,5680/n/D,5680/ac/D,5680/ax/D,5680/be/D,5680/n/eC/D,5680/ac/eC/D,5680/ax/eC/D,5680/be/eC/D,5680/ac/eCee/D,5680/ax/eCee/D,5680/be/eCee/D,5700/a/D,5700/n/D,5700/ac/D,5700/ax/D,5700/be/D,5700/n/Ce/D,5700/ac/Ce/D,5700/ax/Ce/D,5700/be/Ce/D,5700/ac/eeCe/D,5700/ax/eeCe/D,5700/be/eeCe/D,5720/a/D,5720/n/D,5720/ac/D,5720/ax/D,5720/be/D,5720/n/eC/D,5720/ac/eC/D,5720/ax/eC/D,5720/be/eC/D,5720/ac/eeeC/D,5720/ax/eeeC/D,5720/be/eeeC/D,5745/a,5745/n,5745/ac,5745/ax,5745/be,5745/n/Ce,5745/ac/Ce,5745/ax/Ce,5745/be/Ce,5745/ac/Ceee,5745/ax/Ceee,5745/be/Ceee,5765/a,5765/n,5765/ac,5765/ax,5765/be,5765/n/eC,5765/ac/eC,5765/ax/eC,5765/be/eC,5765/ac/eCee,5765/ax/eCee,5765/be/eCee,5785/a,5785/n,5785/ac,5785/ax,5785/be,5785/n/Ce,5785/ac/Ce,5785/ax/Ce,5785/be/Ce,5785/ac/eeCe,5785/ax/eeCe,5785/be/eeCe,5805/a,5805/n,5805/ac,5805/ax,5805/be,5805/n/eC,5805/ac/eC,5805/ax/eC,5805/be/eC,5805/ac/eeeC,5805/ax/eeeC,5805/be/eeeC,5825/a,5825/n,5825/ac,5825/ax,5825/be,5825/n/Ce,5825/ac/Ce,5825/ax/Ce,5825/be/Ce,5845/a,5845/n,5845/ac,5845/ax,5845/be,5845/n/eC,5845/ac/eC,5845/ax/eC,5845/be/eC,5865/a,5865/n,5865/ac,5865/ax,5865/be"
+  }
+ ],
+ "reg": [
+  {
+   ".id": "*2",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "02:00:00:00:00:08",
+   "uptime": "1h3m28s",
+   "last-activity": "0ms",
+   "signal": "-71",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ax",
+   "tx-rate": "309700000",
+   "rx-rate": "344100000",
+   "packets": "2179305,471008",
+   "bytes": "3139476217,45776099",
+   "tx-bits-per-second": "224824",
+   "rx-bits-per-second": "52544",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*6",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:09",
+   "uptime": "1h59s",
+   "last-activity": "18s20ms",
+   "signal": "-78",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "162000000",
+   "rx-rate": "6000000",
+   "packets": "397,777",
+   "bytes": "109464,104032",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*C",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "02:00:00:00:00:0A",
+   "uptime": "35m29s",
+   "last-activity": "9s20ms",
+   "signal": "-68",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ax",
+   "tx-rate": "344100000",
+   "rx-rate": "413000000",
+   "packets": "2195,3261",
+   "bytes": "923729,656132",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*D",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "02:00:00:00:00:0B",
+   "uptime": "35m27s",
+   "last-activity": "15s20ms",
+   "signal": "-78",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ax",
+   "tx-rate": "344100000",
+   "rx-rate": "309700000",
+   "packets": "5877,6445",
+   "bytes": "5195795,1107016",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*F",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:0C",
+   "uptime": "35m25s",
+   "last-activity": "0ms",
+   "signal": "-70",
+   "auth-type": "wpa2-psk",
+   "mfp": "true",
+   "band": "5ghz-ax",
+   "tx-rate": "413000000",
+   "rx-rate": "6000000",
+   "packets": "5614,5826",
+   "bytes": "524639,330964",
+   "tx-bits-per-second": "1888",
+   "rx-bits-per-second": "1072",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*10",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:0D",
+   "uptime": "35m23s",
+   "last-activity": "0ms",
+   "signal": "-56",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-n",
+   "tx-rate": "130000000",
+   "rx-rate": "6000000",
+   "packets": "2001,3943",
+   "bytes": "293397,1304885",
+   "tx-bits-per-second": "424",
+   "rx-bits-per-second": "288",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*12",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:0E",
+   "uptime": "35m21s",
+   "last-activity": "0ms",
+   "signal": "-68",
+   "auth-type": "wpa2-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "360000000",
+   "rx-rate": "162000000",
+   "packets": "4312,4382",
+   "bytes": "3882501,658153",
+   "tx-bits-per-second": "1664",
+   "rx-bits-per-second": "8992",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*13",
+   "interface": "wifi1",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:0F",
+   "uptime": "35m19s",
+   "last-activity": "0ms",
+   "signal": "-50",
+   "auth-type": "wpa2-psk",
+   "band": "2ghz-n",
+   "tx-rate": "65000000",
+   "rx-rate": "72200000",
+   "packets": "166,1257",
+   "bytes": "23389,86776",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "448",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*15",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:10",
+   "uptime": "35m17s",
+   "last-activity": "0ms",
+   "signal": "-63",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "400000000",
+   "rx-rate": "400000000",
+   "packets": "1207209,503446",
+   "bytes": "1774315499,39306107",
+   "tx-bits-per-second": "23848192",
+   "rx-bits-per-second": "519696",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*17",
+   "interface": "wifi1",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:11",
+   "uptime": "35m7s",
+   "last-activity": "12s10ms",
+   "signal": "-37",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "2ghz-n",
+   "tx-rate": "65000000",
+   "rx-rate": "1000000",
+   "packets": "1014,1151",
+   "bytes": "274383,467760",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*19",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:12",
+   "uptime": "34m58s",
+   "last-activity": "0ms",
+   "signal": "-60",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "360000000",
+   "rx-rate": "400000000",
+   "packets": "1561,2529",
+   "bytes": "483525,124792",
+   "tx-bits-per-second": "752",
+   "rx-bits-per-second": "384",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*1A",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:13",
+   "uptime": "34m57s",
+   "last-activity": "3s10ms",
+   "signal": "-78",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "270000000",
+   "rx-rate": "162000000",
+   "packets": "1435,2423",
+   "bytes": "405600,107925",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*1C",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "00:11:22:00:00:14",
+   "uptime": "34m51s",
+   "last-activity": "6s10ms",
+   "signal": "-74",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-ac",
+   "tx-rate": "180000000",
+   "rx-rate": "150000000",
+   "packets": "1074,14347",
+   "bytes": "436583,516860",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*42",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "02:00:00:00:00:15",
+   "uptime": "30m37s",
+   "last-activity": "0ms",
+   "signal": "-71",
+   "auth-type": "wpa3-psk-gd",
+   "mfp": "true",
+   "band": "5ghz-be",
+   "tx-rate": "344100000",
+   "rx-rate": "162500000",
+   "packets": "11633,10755",
+   "bytes": "10496105,2349855",
+   "tx-bits-per-second": "280",
+   "rx-bits-per-second": "1624",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*F8",
+   "interface": "wifi2",
+   "ssid": "Home",
+   "mac-address": "02:00:00:00:00:16",
+   "uptime": "8m37s",
+   "last-activity": "12s20ms",
+   "signal": "-79",
+   "auth-type": "wpa3-psk",
+   "mfp": "true",
+   "band": "5ghz-n",
+   "tx-rate": "65000000",
+   "rx-rate": "72200000",
+   "packets": "15,45",
+   "bytes": "1908,2090",
+   "tx-bits-per-second": "0",
+   "rx-bits-per-second": "0",
+   "vlan-id": "10",
+   "authorized": "true"
+  },
+  {
+   ".id": "*13F",
+   "interface": "wifi1-iot",
+   "ssid": "IoT",
+   "mac-address": "00:11:22:00:00:17",
+   "uptime": "4s",
+   "last-activity": "0ms",
+   "signal": "-64",
+   "auth-type": "wpa2-psk",
+   "band": "2ghz-n",
+   "tx-rate": "1000000",
+   "rx-rate": "1000000",
+   "packets": "5,5",
+   "bytes": "872,567",
+   "tx-bits-per-second": "1240",
+   "rx-bits-per-second": "1224",
+   "vlan-id": "20"
+  }
+ ],
+ "log": [
+  {
+   "time": "2026-11-19 17:01:55",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:08@wifi2(Home) connected, signal strength -74, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:04:54",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:09@wifi2(Home) connected, signal strength -76, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:20:30",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:16@wifi1(Home) connected, signal strength -76, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:20:50",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:15@wifi2(Home) connected, signal strength -61, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:25:42",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:16@wifi1(Home) disconnected, connection lost, signal strength -76, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:30:24",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:0A@wifi2(Home) connected, signal strength -55, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:25",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:0B@wifi2(Home) connected, signal strength -76, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:28",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:0C@wifi2(Home) connected, signal strength -74, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:30",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:16@wifi2(Home) connected, signal strength -71, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:30",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:0D@wifi2(Home) connected, signal strength -51, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:32",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:0E@wifi2(Home) connected, signal strength -64, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:33",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:0F@wifi1(Home) connected, signal strength -53, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:30:36",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:10@wifi2(Home) connected, signal strength -61, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:45",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:11@wifi1(Home) connected, signal strength -37, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:30:55",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:12@wifi2(Home) connected, signal strength -62, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:30:55",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:13@wifi2(Home) connected, signal strength -78, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:31:01",
+   "topics": "wireless,info",
+   "message": "00:11:22:00:00:14@wifi2(Home) connected, signal strength -73, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:34:13",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:15@wifi2(Home) roamed to 02:00:00:00:00:15@wifi1(Home), signal strength -74, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:34:16",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:16@wifi2(Home) roamed to 02:00:00:00:00:16@wifi1(Home), signal strength -69, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:35:15",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:15@wifi1(Home) roamed to 02:00:00:00:00:15@wifi2(Home), signal strength -71, channel 5180/be/Ce/I"
+  },
+  {
+   "time": "2026-11-19 17:52:34",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) disassociated, key handshake timeout (wrong pass), signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:35",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) associated, signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:41",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) disassociated, key handshake timeout (wrong pass), signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:42",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) associated, signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:48",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) disassociated, key handshake timeout (wrong pass), signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:49",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) associated, signal strength -63, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:56",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) disassociated, key handshake timeout (wrong pass), signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:52:57",
+   "topics": "wireless,debug",
+   "message": "00:11:22:00:00:17@wifi1-iot(IoT) associated, signal strength -64, channel 2412/be"
+  },
+  {
+   "time": "2026-11-19 17:57:15",
+   "topics": "wireless,info",
+   "message": "02:00:00:00:00:16@wifi1(Home) roamed to 02:00:00:00:00:16@wifi2(Home), signal strength -73, channel 5180/be/Ce/I"
+  }
+ ]
+}

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.0 (2026-11-19)
+
+- Wi-Fi page: an access point in direct mode is set from its card
+  (**Settings**): channel (the radio's legal channels for its country,
+  radar channels marked), width and transmit power per radio, automatic
+  or fixed; each SSID on or off per radio (a radio off takes its secondary
+  SSIDs with it); client isolation and a new password per SSID. Previewed
+  with warnings (radar channel, automatic 5 GHz channel, clients cut or
+  reconnecting, new password to give out), read back, undone by the access
+  point unless kept. Isolation and password go to the SSID's own
+  datapath or security profile (refused when another SSID shares it), or
+  on its interfaces when it has none.
+- Rollback without scheduler: where the device-mode forbids
+  `/system/scheduler` (hAP access points leave the factory in mode
+  `home`), the rollback is a background `:execute` job watching a global
+  variable; "Keep" and the countdown restart go through that variable.
+  Every page's guarded change uses it on such a device.
+- Passwords never shown: commands, rollback scripts and errors mask
+  `password` and `passphrase` values everywhere.
+- `POST /api/wifi/preview`, `POST /api/wifi/apply`; "Keep" is
+  `/api/infra/confirm`.
+
+## 0.6.0 (2026-11-19)
+
+- Wi-Fi page (read only): every switch with Wi-Fi radios (RouterOS 7
+  `wifi` package) is an access point, and all of them show as one network.
+  Access points with their radios (band, channel, width, transmit power,
+  state, clients); SSIDs merged by name (VLAN, security, client isolation,
+  where each one exists) with the differences between access points
+  (VLAN, security, isolation, hidden, enabled, bands, missing on an access
+  point); the channel map per band (DFS range, overlapping blocks of two
+  radios); the clients of every access point with their name and IP (the
+  Devices names: DHCP leases, names given by hand, DNS), SSID, VLAN, band,
+  signal, link rates, traffic and time connected; connections and roaming
+  read from the access points' logs (between radios of one access point,
+  and from one access point to another).
+- `GET /api/wifi` (5 s cache shared by viewers).
+- Overview: an access point's tile counts its Wi-Fi clients and opens the
+  Wi-Fi page; Topology: access points carry their icon and open it too;
+  Devices: a Wi-Fi port shows its SSID.
+
 ## 0.5.3 (2026-11-10)
 
 - Devices: every interface MAC of the switches is left out, not only the one

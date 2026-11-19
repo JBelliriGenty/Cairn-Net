@@ -179,9 +179,18 @@ function model() {
     const r = f.resource || {};
     return { name: c.name, url: c.url, error: f.error || s.error, r, rb: s.routerboard || {}, health, ports, uplinks, vlans,
       bonds: (s.bonds || []).map(b => ({ name: b.name, comment: b.comment, running: yes(b.running), slaves: list(b.slaves) })),
-      hosts: s.hosts || [], leases: s.leases || [], arp: s.arp || [], neighbors: s.neighbors || [], ms: f.ms };
+      hosts: s.hosts || [], leases: s.leases || [], arp: s.arp || [], neighbors: s.neighbors || [], ms: f.ms,
+      wifi: s.wifi || [], wreg: s.wifi_reg || [] };
   });
   return all;
+}
+
+// An access point: a switch with Wi-Fi radios (RouterOS wifi package); a port
+// that is a Wi-Fi interface shows its SSID.
+const isAp = sw => (sw.wifi || []).some(r => r["radio-mac"]);
+function portLabel(sws, sw, port) {
+  const w = ((sws.find(s => s.name === sw) || {}).wifi || []).find(r => r.name === port);
+  return w && w["configuration.ssid"] ? port + " · " + w["configuration.ssid"] : port;
 }
 
 // Health rows -> problems (thresholds for the switch chips, not for SFP modules).
@@ -388,6 +397,7 @@ async function slowTick() {
     if (VIEW === "system") loadSys();
     if (VIEW === "ip") loadIp();
     if (VIEW === "ifaces" && !IF_UNTIL) loadIfaces();
+    if (VIEW === "wifi" && window.loadWifi) loadWifi();
     readOk(); render(true);
   } catch (e) { banner(t("Read failed: {err}", { err: e.message }), "read"); }
 }
@@ -412,6 +422,7 @@ function show(view) {
   if (view === "ifaces" && (!IF || IF.name !== SW)) { IF = null; loadIfaces(); }
   if (view === "tools" && (!TL || TL.name !== SW)) { TL = null; loadTools(); }
   if (view === "chip" && window.chipShow) chipShow(); // chip.js may load after the config answer
+  if (view === "wifi" && window.loadWifi) loadWifi();
   render(true);
   animUntil = Date.now() + ENTER_MS;
   clearTimeout(show.timer);
@@ -439,10 +450,12 @@ function render(force = false) {
   if (VIEW === "tools") renderTools();
   if (VIEW === "chip" && window.renderChip) renderChip();
   if (VIEW === "term") renderTerm();
+  if (VIEW === "wifi" && window.renderWifi) renderWifi();
   paint();
 }
 
 function renderChrome(sws) {
+  document.querySelector('#nav [data-view="wifi"]').hidden = !sws.some(isAp);
   $("pills").innerHTML = sws.map(s => {
     const lvl = worst(issuesOf(s).map(([l]) => l));
     return '<button class="pill ' + lvl + '" data-goto="ports/' + esc(s.name) + '">' + esc(s.name) + "</button>";
@@ -504,7 +517,9 @@ function renderOverview(sws) {
     const temps = s.health.filter(h => h.type === "C").map(h => num(h.value));
     const h = hist[s.name] || { rx: [], tx: [] };
     const sp = s.ports.filter(p => p.running).length;
-    return tile("ports/" + s.name, s.name + " · " + (s.rb.model || s.r["board-name"] || ""), t("{up} / {total} ports up", { up: sp, total: s.ports.length }), l,
+    const ap = isAp(s) ? '<p class="sub">' + esc([tp(s.wreg.length, "{n} Wi-Fi client", "{n} Wi-Fi clients"),
+      [...new Set(s.wifi.map(r => r["configuration.ssid"]).filter(Boolean))].join(", ")].filter(Boolean).join(" · ")) + "</p>" : "";
+    return tile(isAp(s) ? "wifi" : "ports/" + s.name, s.name + " · " + (s.rb.model || s.r["board-name"] || ""), t("{up} / {total} ports up", { up: sp, total: s.ports.length }), l, ap +
       '<div class="front mini">' + frontPanel(s, true) + "</div>" +
       '<div class="rates"><span class="rx">↓ ' + bits(last(h.rx)) + '</span><span class="tx">↑ ' + bits(last(h.tx)) + "</span></div>" +
       spark([h.rx, h.tx], 8000, true) +
@@ -527,6 +542,7 @@ function renderOverview(sws) {
   $("facts").innerHTML = [
     ["clients", tp(devs.length, "{n} device seen", "{n} devices seen"), ""],
     ["vlans", tp(vids.size, "{n} VLAN", "{n} VLANs"), ""],
+    ...(sws.some(isAp) ? [["wifi", tp(sws.reduce((a, s) => a + s.wreg.length, 0), "{n} Wi-Fi client", "{n} Wi-Fi clients"), ""]] : []),
     ...upgrades.map(s => ["ports/" + s.name, t("{name}: firmware {v} available", { name: s.name, v: s.rb["upgrade-firmware"] }), ""]),
   ].map(([v, txt, c]) => '<button class="chip' + c + '" data-goto="' + esc(v) + '">' + esc(txt) + "</button>").join("");
 }
@@ -621,7 +637,7 @@ function renderClients(sws) {
   const rows = all.filter(d => !q || q.split(/\s+/).every(w => [d.name, d.ip, d.mac, d.sw, d.port, short(d.port), t(KIND_LABEL[kindOf(d)]), ...d.vids].join(" ").toLowerCase().includes(w)));
   $("clients").innerHTML = "<thead><tr><th>" + [t("Device"), t("Kind"), t("IP address"), t("MAC address"), t("Switch"), t("Port"), t("VLAN")].join("</th><th>") + "</th></tr></thead><tbody>" +
     (rows.map(d => "<tr><td>" + nameCell(d) + "</td><td>" + kindButton(d) + "</td><td>" + esc(d.ip || "") + '</td><td class="mono">' + esc(d.mac) + "</td><td>" + esc(d.sw) +
-      '</td><td><button class="chip" data-goto="ports/' + esc(d.sw) + '" data-sel="' + esc(d.port) + '">' + esc(d.port) + "</button></td><td>" + esc(d.vids.join(", ")) + "</td></tr>").join("") ||
+      '</td><td><button class="chip" data-goto="ports/' + esc(d.sw) + '" data-sel="' + esc(d.port) + '">' + esc(portLabel(sws, d.sw, d.port)) + "</button></td><td>" + esc(d.vids.join(", ")) + "</td></tr>").join("") ||
       '<tr><td colspan="7" class="sub">' + t("No device matches.") + "</td></tr>") + "</tbody>";
   $("view-title").textContent = t(VIEWS.clients) + " · " + (q ? rows.length + " / " : "") + all.length;
 }

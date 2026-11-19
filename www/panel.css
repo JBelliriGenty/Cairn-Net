@@ -409,7 +409,7 @@ td.wrap { white-space: normal; }
 .chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-weight: 600; }
 a.chip { text-decoration: none; color: inherit; }
 button.pill { padding: 2px 10px; border: 0; }
-#q { width: min(420px, 100%); padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); }
+#q, #wf-q { width: min(420px, 100%); padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); }
 /* DHCP: blocking problems, pending dhcp.yml diff */
 .problems { margin: 0 0 16px; padding: 10px 14px 10px 32px; border-radius: var(--radius); background: var(--bad-bg); color: var(--bad-ink);
   border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
@@ -546,3 +546,18 @@ pre.tl-cmd { white-space: pre-wrap; word-break: break-all; background: var(--tra
 .te-line label { white-space: nowrap; color: var(--muted); }
 .te-line input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--control); border-radius: 6px; background: var(--panel); color: inherit;
   font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+
+/* Wi-Fi page (www/wifi.js): access points wide enough for their radios table; channel map,
+   one strip per band, scrolls sideways on a phone */
+.wf-aps { grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); }
+.wf-mapwrap { overflow-x: auto; }
+.wf-map { display: block; width: 100%; min-width: 640px; height: auto; }
+.wf-band { margin: 4px 0; font-size: 13px; color: var(--muted); }
+.wf-map .tick { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+.wf-map .tick-l { stroke: var(--line); stroke-width: 1; }
+.wf-map .dfs { fill: var(--track); }
+.wf-map .dfs-l { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+.wf-map .bar rect { fill: color-mix(in srgb, var(--ok) 22%, transparent); stroke: var(--ok); stroke-width: 1.5; }
+.wf-map .bar.warn rect { fill: color-mix(in srgb, var(--warn) 22%, transparent); stroke: var(--warn); }
+.wf-map .bar.bad rect { fill: color-mix(in srgb, var(--bad) 22%, transparent); stroke: var(--bad); }
+.wf-map .lbl { fill: var(--fg); font-size: 12px; }

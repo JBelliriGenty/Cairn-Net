@@ -505,6 +505,33 @@ pub fn arm(undo: &[String]) -> Cmd {
         kv("comment", "Cairn Net: puts the old settings back unless the change is confirmed".into()), kv("on-event", undo.join("\n"))])
 }
 
+/// The global variable of the rollback job, where there is no scheduler.
+pub const ROLLBACK_VAR: &str = "cairnNetRollback";
+
+/// Where the device-mode forbids /system/scheduler (hAP access points leave
+/// the factory in mode `home`): a background ":execute" job waits ROLLBACK_S
+/// seconds, then runs `undo` unless its global variable reads "confirm"
+/// ("restart" starts the wait again). It ends with the variable removed
+/// (kept) or "rolled-back". Lost if the device reboots meanwhile, where the
+/// scheduler would survive.
+pub fn arm_job(undo: &[String]) -> Cmd {
+    let v = ROLLBACK_VAR;
+    let body: Vec<&str> = undo.iter().map(String::as_str).filter(|l| !l.starts_with("/system scheduler remove")).collect();
+    let script = format!(":global {v} \"armed\"\n:local n 0\n:while ($n < {ROLLBACK_S}) do={{\n:delay 1s\n:global {v}\n\
+        :if (${v} = \"restart\") do={{ :set n 0; :set {v} \"armed\" }} else={{ :set n ($n + 1) }}\n\
+        :if (${v} = \"confirm\") do={{ :set n ({ROLLBACK_S} + 1) }}\n}}\n:global {v}\n\
+        :if (${v} = \"confirm\") do={{ /system script environment remove [find name=\"{v}\"] }} else={{\n:set {v} \"rolling\"\n{}\n:set {v} \"rolled-back\"\n}}",
+        body.join("\n"));
+    ("/execute".into(), vec![("script".into(), script)])
+}
+
+/// What the page or Cairn Net says to a waiting rollback job: "restart" or
+/// "confirm", only while it waits (a job already rolling back is left alone).
+pub fn job_say(word: &str) -> String {
+    let v = ROLLBACK_VAR;
+    format!(":global {v}; :if (${v} = \"armed\" || ${v} = \"restart\") do={{ :set {v} \"{word}\" }}")
+}
+
 /// Whether the switch now runs what was asked.
 pub fn matches(live: &Value, w: &Want) -> bool {
     let id_ok = w.identity.as_ref().is_none_or(|i| live["identity"].as_str() == Some(i));
@@ -524,6 +551,21 @@ pub fn show_all(cmds: &[Cmd]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The job variant was tried on a RouterOS 7.25.1 CHR (2026-11-19):
+    /// the job outlives the API connection that starts it, "restart" saves it
+    /// past its first delay, "confirm" keeps the change, nothing = rolled back.
+    #[test]
+    fn rollback_job() {
+        let mut undo = vec![":do { /x set a=1 } on-error={}".to_string()];
+        finish(&mut undo);
+        let (path, kv) = arm_job(&undo);
+        assert_eq!((path.as_str(), kv[0].0.as_str()), ("/execute", "script"));
+        let s = &kv[0].1;
+        assert!(s.starts_with(":global cairnNetRollback \"armed\"") && s.contains(":while ($n < 60)"));
+        assert!(s.contains("/x set a=1") && s.contains("rolled back") && !s.contains("/system scheduler"));
+        assert_eq!(job_say("confirm"), ":global cairnNetRollback; :if ($cairnNetRollback = \"armed\" || $cairnNetRollback = \"restart\") do={ :set cairnNetRollback \"confirm\" }");
+    }
 
     #[test]
     fn resolve_answers() {

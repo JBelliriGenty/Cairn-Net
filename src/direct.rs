@@ -185,8 +185,30 @@ pub fn canonical(new: &str) -> String {
 /// One API command: path and its "=key=value" words.
 pub type Cmd = (String, Vec<(String, String)>);
 
+/// `passphrase="…"` in a script line (rollbacks hold the old one) as
+/// `passphrase="•••"`; the value is quoted as `infra::q` does.
+pub fn redact(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(i) = rest.find("passphrase=") {
+        out.push_str(&rest[..i + 11]);
+        rest = &rest[i + 11..];
+        let end = if let Some(q) = rest.strip_prefix('"') {
+            let mut esc = false;
+            q.char_indices().find(|&(_, c)| { let stop = c == '"' && !esc; esc = c == '\\' && !esc; stop }).map_or(rest.len(), |(j, _)| j + 2)
+        } else {
+            rest.find([' ', '\n', '}', ';']).unwrap_or(rest.len())
+        };
+        out.push_str("\"•••\"");
+        rest = &rest[end..];
+    }
+    out + rest
+}
+
+/// A command as shown, logged and put in errors: passwords never.
 pub fn show(c: &Cmd) -> String {
-    let words: Vec<String> = c.1.iter().map(|(k, v)| format!("{k}={}", if v.is_empty() || v.contains(' ') { format!("\"{v}\"") } else { v.clone() })).collect();
+    let secret = |k: &str| k == "password" || k.ends_with("passphrase");
+    let words: Vec<String> = c.1.iter().map(|(k, v)| format!("{k}={}", if secret(k) { "\"•••\"".into() } else if v.is_empty() || v.contains(' ') { format!("\"{}\"", redact(v)) } else { v.clone() })).collect();
     format!("{} {}", c.0, words.join(" "))
 }
 
@@ -352,6 +374,15 @@ pub fn run(api: &mut Api, cmds: &[Cmd]) -> (usize, Option<String>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn passwords_never_shown() {
+        assert_eq!(redact(r#"a passphrase="x\"y\\" b security.passphrase="z" c"#), r#"a passphrase="•••" b security.passphrase="•••" c"#);
+        assert_eq!(redact("passphrase=abc def"), "passphrase=\"•••\" def");
+        assert_eq!(redact("no secret here"), "no secret here");
+        let c: Cmd = ("/user/set".into(), vec![("password".into(), "s3cret".into()), ("comment".into(), "a b".into())]);
+        assert_eq!(show(&c), "/user/set password=\"•••\" comment=\"a b\"");
+    }
 
     #[test]
     fn option_121_round_trip() {

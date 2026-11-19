@@ -216,10 +216,9 @@ pub fn plan(op: &Value, ctx: &Ctx) -> Result<Vec<Cmd>, String> {
     }
 }
 
-/// A command as shown and logged: passwords never.
+/// A command as shown and logged: passwords never (direct::show masks them).
 pub fn shown(c: &Cmd) -> String {
-    let masked: Vec<(String, String)> = c.1.iter().map(|(k, v)| (k.clone(), if k == "password" { "*****".into() } else { v.clone() })).collect();
-    show(&(c.0.clone(), masked))
+    show(c)
 }
 
 /// Operations that need the switch's name typed (second confirmation).
@@ -479,7 +478,7 @@ pub fn restore(c: &SwitchCfg, v: &Value, user: &str) -> Result<Value, String> {
         return Err("choose a .backup file".into());
     }
     let mut api = write_api(c)?;
-    if !print(&mut api, "/system/scheduler", ".id", &[&format!("?name={}", infra::ROLLBACK)])?.is_empty() {
+    if crate::rollback_left(&mut api)? {
         return Err("a change is still waiting for its confirmation: confirm it or wait for the rollback".into());
     }
     if print(&mut api, "/file", ".id", &[&format!("?name={name}")])?.is_empty() {
@@ -674,7 +673,7 @@ mod tests {
         assert!(plan(&json!({"t": "file", "name": "../x", "del": true}), &c).is_err());
         assert!(plan(&json!({"t": "file", "name": "flash/a.rsc", "del": true}), &c).is_ok());
         let b = plan(&json!({"t": "backup", "name": "a", "password": "pw"}), &c).unwrap();
-        assert!(shown(&b[0]).contains("password=*****"));
+        assert!(shown(&b[0]).contains("password=\"•••\""));
     }
 
     #[test]

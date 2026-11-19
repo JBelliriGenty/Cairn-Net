@@ -17,6 +17,8 @@
 //!
 //! Firewall (src/firewall.rs): filter, NAT, mangle, raw, lists, read only.
 //!
+//! Wi-Fi (src/wifi.rs): the access points as one network; settings of one access point in direct mode.
+//!
 //! Without such a proxy, "login" in the configuration turns on the built-in
 //! sign-in (src/login.rs, HTTPS required: "tls" with cert and key files).
 //!
@@ -41,6 +43,7 @@ mod system;
 mod term;
 mod tools;
 mod topo;
+mod wifi;
 
 use openssl::hash::MessageDigest;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -64,6 +67,7 @@ const IFACES_JS: &str = include_str!("../www/ifaces.js");
 const TOOLS_JS: &str = include_str!("../www/tools.js");
 const CHIP_JS: &str = include_str!("../www/chip.js");
 const TERM_JS: &str = include_str!("../www/term.js");
+const WIFI_JS: &str = include_str!("../www/wifi.js");
 const CSS: &str = include_str!("../www/panel.css");
 const ICON: &str = include_str!("../www/icon.svg");
 const I18N: &str = include_str!("../www/i18n.js");
@@ -397,6 +401,9 @@ fn slow_one(api: &mut Api) -> Result<Value, String> {
         "vlan_ifaces": print(api, "/interface/vlan", "name,vlan-id,interface", &[])?,
         "pools": print(api, "/ip/pool", "name,ranges", &[])?,
         "arp": print(api, "/ip/arp", "address,mac-address,interface", &["?complete=true"])?,
+        // access points (RouterOS wifi package): the Wi-Fi page reads the rest (src/wifi.rs)
+        "wifi": print(api, "/interface/wifi", wifi::IFACE_PROPS, &[])?,
+        "wifi_reg": print(api, "/interface/wifi/registration-table", "interface,mac-address", &[])?,
     }))
 }
 
@@ -973,8 +980,61 @@ fn infra_preview(v: &Value) -> Result<Value, String> {
     Ok(json!({"ok": true, "commands": infra::show_all(&cmds), "rollback": undo, "rollback_s": infra::ROLLBACK_S, "moves": moves.map(|m| m.to_string())}))
 }
 
+/// Can the switch run the rollback scheduler? hAP access points leave the
+/// factory in device-mode `home`, which forbids it: their rollback is a job
+/// (infra::arm_job). No device-mode menu (older RouterOS): yes.
+fn has_scheduler(api: &mut Api) -> bool {
+    print(api, "/system/device-mode", "scheduler", &[]).ok().and_then(|mut r| r.pop())
+        .is_none_or(|r| !matches!(r["scheduler"].as_str(), Some("false" | "no")))
+}
+
+/// The rollback job's variable (write account: the read account may not see it).
+fn rollback_var(api: &mut Api) -> Result<Option<String>, String> {
+    Ok(print(api, "/system/script/environment", "name,value", &[&format!("?name={}", infra::ROLLBACK_VAR)])?.pop()
+        .map(|r| r["value"].as_str().unwrap_or("").to_string()))
+}
+
 fn rollback_left(api: &mut Api) -> Result<bool, String> {
-    Ok(!print(api, "/system/scheduler", ".id", &[&format!("?name={}", infra::ROLLBACK)])?.is_empty())
+    if has_scheduler(api) {
+        return Ok(!print(api, "/system/scheduler", ".id", &[&format!("?name={}", infra::ROLLBACK)])?.is_empty());
+    }
+    Ok(rollback_var(api)?.is_some_and(|v| v == "armed" || v == "restart"))
+}
+
+fn rollback_arm(api: &mut Api, undo: &[String]) -> (usize, Option<String>) {
+    let arm = if has_scheduler(api) { infra::arm(undo) } else { infra::arm_job(undo) };
+    direct::run(api, &[arm])
+}
+
+/// The countdown starts again from now (start-date/start-time = the switch's clock).
+fn rollback_restart(api: &mut Api) -> Result<(), String> {
+    if !has_scheduler(api) {
+        return api.call(&["/execute", &format!("=script={}", infra::job_say("restart")), "=as-string="]).map(|_| ());
+    }
+    let clock = print(api, "/system/clock", "date,time", &[])?.pop().unwrap_or_default();
+    api.call(&["/system/scheduler/set", &format!("=numbers={}", infra::ROLLBACK), &format!("=start-date={}", clock["date"].as_str().unwrap_or("")),
+        &format!("=start-time={}", clock["time"].as_str().unwrap_or(""))]).map(|_| ())
+}
+
+/// "Keep": the rollback goes (write account).
+fn rollback_disarm(api: &mut Api) -> Result<(), String> {
+    if !rollback_left(api)? {
+        return Err("no change waiting: the switch already put the old settings back".into());
+    }
+    if has_scheduler(api) {
+        return api.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)]).map(|_| ());
+    }
+    api.call(&["/execute", &format!("=script={}", infra::job_say("confirm")), "=as-string="])?;
+    // the job looks every second, then removes its variable
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(500));
+        match rollback_var(api)?.as_deref() {
+            None => return Ok(()),
+            Some("rolling" | "rolled-back") => return Err("too late: the switch is putting the old settings back".into()),
+            _ => {}
+        }
+    }
+    Err("the switch did not take the confirmation: the rollback may still run".into())
 }
 
 /// Rollback armed, commands run, then a new connection reads the switch back;
@@ -991,7 +1051,7 @@ fn guarded_apply(c: &SwitchCfg, user: &str, what: &str, plan: impl FnOnce(&mut A
     if cmds.is_empty() {
         return Ok(json!({"ok": true, "commands": [], "pending": false}));
     }
-    let (done, err) = direct::run(&mut api, &[infra::arm(&undo)]);
+    let (done, err) = rollback_arm(&mut api, &undo);
     if done == 0 {
         return Err(format!("rollback not armed, nothing changed: {}", err.unwrap_or_default()));
     }
@@ -1002,9 +1062,7 @@ fn guarded_apply(c: &SwitchCfg, user: &str, what: &str, plan: impl FnOnce(&mut A
     let back = Api::connect(c, &c.write_user, &c.write_password).and_then(|mut a| {
         let ok = verify(&mut a)?;
         if ok {
-            let clock = print(&mut a, "/system/clock", "date,time", &[])?.pop().unwrap_or_default();
-            a.call(&["/system/scheduler/set", &format!("=numbers={}", infra::ROLLBACK), &format!("=start-date={}", clock["date"].as_str().unwrap_or("")),
-                &format!("=start-time={}", clock["time"].as_str().unwrap_or(""))])?;
+            rollback_restart(&mut a)?;
         }
         Ok(ok)
     });
@@ -1049,7 +1107,7 @@ fn move_apply(c: &SwitchCfg, user: &str, w: &infra::Want, new: std::net::Ipv4Add
     if moves != Some(new) {
         return Err("the switch changed meanwhile: reload".into());
     }
-    let (done, err) = direct::run(&mut api, &[infra::arm(&undo)]);
+    let (done, err) = rollback_arm(&mut api, &undo);
     if done == 0 {
         return Err(format!("rollback not armed, nothing changed: {}", err.unwrap_or_default()));
     }
@@ -1071,7 +1129,7 @@ fn move_apply(c: &SwitchCfg, user: &str, w: &infra::Want, new: std::net::Ipv4Add
         if !infra::matches(&infra::read(&mut a)?, w) {
             return Err("read back differs".into());
         }
-        a.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)]).map(|_| ())
+        rollback_disarm(&mut a)
     };
     // ponytail: fixed 15 s margin before the rollback is due
     let res = loop {
@@ -1188,10 +1246,7 @@ fn firewall_confirm(v: &Value, user: &str, author: &str) -> Result<Value, String
     let c = &sw.cfg;
     let pending = FW_PENDING.lock().unwrap_or_else(|e| e.into_inner()).remove(&c.name);
     let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
-    if !rollback_left(&mut api)? {
-        return Err("no change waiting: the switch already put the old settings back".into());
-    }
-    api.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)])?;
+    rollback_disarm(&mut api)?;
     eprintln!("firewall confirmed on {} by {user}", c.name);
     forget_cache();
     let mut out = json!({"ok": true});
@@ -1296,10 +1351,7 @@ fn infra_confirm(v: &Value, user: &str) -> Result<Value, String> {
     let sw = direct_switch(v)?;
     let c = &sw.cfg;
     let mut api = Api::connect(c, &c.write_user, &c.write_password).map_err(|e| format!("write account: {e}"))?;
-    if !rollback_left(&mut api)? {
-        return Err("no change waiting: the switch already put the old settings back".into());
-    }
-    api.call(&["/system/scheduler/remove", &format!("=numbers={}", infra::ROLLBACK)])?;
+    rollback_disarm(&mut api)?;
     eprintln!("infra confirmed on {} by {user}", c.name);
     forget_cache();
     Ok(json!({"ok": true}))
@@ -1496,6 +1548,7 @@ fn handle(cfg: &'static Config, mut r: Request) {
             (Method::Get, "/tools.js") => return respond(r, 200, TOOLS_JS.into(), "text/javascript"),
             (Method::Get, "/chip.js") => return respond(r, 200, CHIP_JS.into(), "text/javascript"),
             (Method::Get, "/term.js") => return respond(r, 200, TERM_JS.into(), "text/javascript"),
+            (Method::Get, "/wifi.js") => return respond(r, 200, WIFI_JS.into(), "text/javascript"),
             (Method::Get, "/panel.css") => return respond(r, 200, CSS.into(), "text/css"),
             (Method::Get, "/i18n.js") => return respond(r, 200, I18N.into(), "text/javascript"),
             (Method::Post, "/api/login") => {
@@ -1563,6 +1616,8 @@ fn handle(cfg: &'static Config, mut r: Request) {
             "/api/ifaces/apply" => ifaces::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/confirm" => infra_confirm(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/infra/power" => infra_power(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/preview" => wifi::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/apply" => wifi::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/chip/preview" => chip::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/chip/apply" => chip::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/settings/probe" => probe(&v),
@@ -1608,6 +1663,8 @@ fn handle(cfg: &'static Config, mut r: Request) {
         "/tools.js" => respond(r, 200, TOOLS_JS.into(), "text/javascript"),
         "/chip.js" => respond(r, 200, CHIP_JS.into(), "text/javascript"),
         "/term.js" => respond(r, 200, TERM_JS.into(), "text/javascript"),
+        "/wifi.js" => respond(r, 200, WIFI_JS.into(), "text/javascript"),
+        "/api/wifi" => respond(r, 200, wifi::view(), "application/json"),
         "/api/kinds" => respond(r, 200, json!({"kinds": topo::kinds(), "all": topo::KINDS}).to_string(), "application/json"),
         "/panel.css" => respond(r, 200, CSS.into(), "text/css"),
         "/i18n.js" => respond(r, 200, I18N.into(), "text/javascript"),

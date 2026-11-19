@@ -145,11 +145,13 @@ function layout(sws) {
   for (const sw of order) {
     const x = X(sw.name);
     const lv = worst(issuesOf(sw).map(([v]) => v));
-    markup += link('data-goto="infra/' + esc(sw.name) + '" class="t-sw ' + lv + '"',
-      '<rect x="' + x + '" y="' + T + '" width="' + COL + '" height="' + SWH + '" rx="10" class="box"/>' +
+    const ap = isAp(sw);
+    markup += link('data-goto="' + (ap ? "wifi" : "infra/" + esc(sw.name)) + '" class="t-sw ' + lv + '"',
+      '<rect x="' + x + '" y="' + T + '" width="' + COL + '" height="' + SWH + '" rx="10" class="box"/>' + (ap ? use("ap", x + COL - 38, T + 8, 26, "ap") : "") +
       (sw.error ? svgText(x + 14, T + 30, t("unreachable"), "t-sub bad") : miniFront(sw, x + 14, T + 12)) +
       svgText(x + 14, T + 52, sw.name, "t-name big") +
-      svgText(x + 14, T + 69, cut([cut(sw.rb.model || sw.r["board-name"] || "", 18), sw.error ? "" : t("{up} / {total} ports up", { up: sw.ports.filter(p => p.running).length, total: sw.ports.length })].filter(Boolean).join(" · "), 40), "t-sub") +
+      svgText(x + 14, T + 69, cut([cut(sw.rb.model || sw.r["board-name"] || "", 18), sw.error ? "" : ap ? tp(sw.wreg.length, "{n} Wi-Fi client", "{n} Wi-Fi clients") :
+        t("{up} / {total} ports up", { up: sw.ports.filter(p => p.running).length, total: sw.ports.length })].filter(Boolean).join(" · "), 40), "t-sub") +
       svgText(x + 14, T + 85, "", "t-sub rate", ' data-swrate="' + esc(sw.name) + '"'),
       sw.name);
 

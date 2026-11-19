@@ -77,6 +77,14 @@ Demo data.
 - **Chip & QoS**: switch chip of CRS3xx (port mirroring, rate limits,
   storm control, port isolation, hardware ACL rules, offload check),
   IGMP/MLD snooping, simple and tree queues.
+- **Wi-Fi**: every access point (RouterOS 7 `wifi` package) as one
+  network: radios (band, channel, width, power, clients), SSIDs merged by
+  name with the differences between access points, the channel map, every
+  client with its name, IP, signal and rates, connections and roaming from
+  the access points' logs. In direct mode, an access point's settings:
+  channel (legal channels only), width and power per radio, SSIDs on or off
+  per radio, client isolation and password per SSID, with the rollback
+  below.
 - **Terminal**: run RouterOS commands per switch; read-only commands
   (print, export, monitor) with the read account, the rest in direct mode,
   every command logged, dangerous ones confirmed by typing the switch name.
@@ -306,6 +314,14 @@ countdown. **Keep** (a new connection again) removes the scheduler; without
 it, the switch puts the old settings back by itself and logs
 `cairn-net: change not confirmed, rolled back`. The preview shows both the
 commands and the rollback script.
+
+Where the device-mode forbids the scheduler (hAP access points leave the
+factory in mode `home`; changing it takes a button press on the device),
+the rollback is a background `:execute` job instead: it waits 60 s and
+puts the old values back unless its global variable `cairnNetRollback`
+reads "confirm"; the read back restarts its wait. It does not survive a
+restart of the device within those 60 s, where the scheduler would.
+Passwords are masked in previews, errors and logs.
 
 Other addresses of the interface Cairn Net reaches the switch through are
 never offered, and a new address may not overlap the network of the
