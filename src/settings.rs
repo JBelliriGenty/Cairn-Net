@@ -193,8 +193,12 @@ pub fn init(path: &str, seed: Vec<SwitchCfg>) {
 }
 
 fn write(path: &str, list: &[SwitchCfg]) -> Result<(), String> {
+    write_private(path, &serde_json::to_string_pretty(&json!({"switches": list.iter().map(|s| s.to_json(true)).collect::<Vec<_>>()})).unwrap())
+}
+
+/// A file only the app reads (mode 0600: passwords), replaced in one step.
+pub fn write_private(path: &str, body: &str) -> Result<(), String> {
     let tmp = format!("{path}.tmp");
-    let body = serde_json::to_string_pretty(&json!({"switches": list.iter().map(|s| s.to_json(true)).collect::<Vec<_>>()})).unwrap();
     let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|e| e.to_string())?;
     f.write_all(body.as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())

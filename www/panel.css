@@ -550,9 +550,14 @@ pre.tl-cmd { white-space: pre-wrap; word-break: break-all; background: var(--tra
 /* Wi-Fi page (www/wifi.js): access points wide enough for their radios table; channel map,
    one strip per band, scrolls sideways on a phone */
 .wf-aps { grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); }
+.wf-aps + .toolbar { margin-top: 14px; }
 .wf-mapwrap { overflow-x: auto; }
 .wf-map { display: block; width: 100%; min-width: 640px; height: auto; }
 .wf-band { margin: 4px 0; font-size: 13px; color: var(--muted); }
+.wf-pair { display: inline-flex; align-items: center; gap: 6px; }
+.wf-qr svg { display: block; width: min(280px, 100%); height: auto; margin: 0 auto; border-radius: 6px; }
+.wf-qrpw { text-align: center; font-size: 18px; }
+.wf-acts { white-space: nowrap; }
 .wf-map .tick { fill: var(--muted); font-size: 10px; text-anchor: middle; }
 .wf-map .tick-l { stroke: var(--line); stroke-width: 1; }
 .wf-map .dfs { fill: var(--track); }

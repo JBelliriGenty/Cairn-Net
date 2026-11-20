@@ -11,6 +11,7 @@ explains what the panel does; this page is what you edit.
 | `notify.headers_file` | you | header lines added to each alert |
 | `<data_dir>/settings.json` | the Settings page | the switches, their accounts and modes |
 | `<data_dir>/kinds.json` | the Topology and Devices pages | kinds and names set by hand |
+| `<data_dir>/ap-extra.rsc` | you, optional | RouterOS lines added to the first-setup script of every new access point |
 | other files in `data_dir` | Cairn Net | deploy key, clones, Bonjour names, terminal log |
 
 Paths are used as written. Give absolute paths: a relative one is read
@@ -186,7 +187,8 @@ All in `data_dir`:
 | `settings.json` | the switches, above |
 | `kinds.json` | MAC (upper case) → `{"kind", "name"}` set by hand on the Topology or Devices page; a plain string is a kind |
 | `bonjour.json` | MAC → Bonjour name, so a device asleep keeps its name |
-| `git_key`, `git_key.pub` | the SSH key for Git mode and the DNS `hosts` integration, made at first start |
+| `git_key`, `git_key.pub` | the SSH key for Git mode, the DNS `hosts` integration and adopting access points, made at first start |
+| `wifi.json` | the Wi-Fi state: SSIDs with their passwords (mode 600, never sent to the page, but for the QR code an administrator asks for) roaming settings and schedules, the radios of each access point, the devices blocked on every access point |
 | `known_hosts` | SSH host keys of the Git and DNS servers, accepted on first use |
 | `git/<switch>/` | the clone of each Git-mode switch's repository |
 | `terminal.log` | every Terminal command, one JSON line each |
@@ -200,7 +202,8 @@ All in `data_dir`:
 ```
 
 Removing `git_key` makes a new key at the next start: add its public half
-to the repositories and DNS servers again.
+to the repositories and DNS servers again (adopted access points keep
+their passwords: the key only serves the adoption).
 
 ## Recipes
 

@@ -1,5 +1,128 @@
 # Changelog
 
+## 0.10.2 (2026-11-20)
+
+- **Restart** button under the state of each radio on the access point
+  cards (direct mode with a write account): the radio stops three seconds
+  and starts again with its SSIDs; clients join again by themselves. For a
+  radio that stops taking new clients while the connected ones stay (seen
+  on RouterOS 7.25.1: new devices associate and drop at once, in a loop,
+  with nothing in the info log). One background job on the access point
+  turns the radio back on, even if Cairn Net's connection drops.
+- New `POST /api/wifi/restart` (`switch`, `iface`); refused for an SSID
+  interface, an unknown one or a disabled radio.
+
+## 0.10.1 (2026-11-20)
+
+- Drift notices no longer fire at a schedule boundary: where Cairn Net runs
+  the schedules (direct mode with a write account), the drift check judges
+  an access point as the schedules leave it within the minute. Before, a
+  check falling in the minute after a boundary sent "differs from the
+  Wi-Fi state", then "in line again" ten minutes later.
+
+## 0.10.0 (2026-11-20)
+
+- SSID schedules: in **Edit the SSIDs**, an SSID may be on air only from
+  one hour to another on the days ticked (from 22:00 until 07:00 runs past
+  midnight; hours left empty: always). The hours are those of each access
+  point's own clock (its time zone), read with the rest. Outside them the
+  SSID counts as off: the access point cards and drift notices agree with
+  the schedule, and taking the state again from an access point keeps it.
+- Cairn Net runs the schedules itself (access points without a scheduler,
+  such as hAP in device-mode `home`): every minute, on access points in
+  direct mode with a write account, it turns the interfaces of scheduled
+  SSIDs on or off, and nothing else of the state, with the usual rollback,
+  kept by itself once a new connection reads them back. A change waiting
+  for **Keep** delays it by a minute; a failure is notified once. The read
+  account looks first: the write account logs in only when there is
+  something to switch.
+- A schedule fits an SSID of its own (guests, children): the main SSID of
+  the radios cannot go off without the SSIDs it carries, and is refused.
+- `POST /api/wifi/state` op `ssids` takes `schedule` (`days` 1 = Monday to
+  7, `from`, `to` as `HH:MM`) per SSID, or none.
+
+## 0.9.0 (2026-11-20)
+
+- Roaming, per SSID of the Wi-Fi state (**Edit the SSIDs**): fast roaming
+  (802.11r, written where the SSID's security lives), roaming help
+  (802.11k neighbour reports and 802.11v transition requests) and dual-band
+  devices steered to 5 GHz (2.4 GHz probe answers delayed), both written
+  on the SSID's interfaces. Taken from an access point like the rest of
+  the state, shown on the SSIDs (differences between access points too).
+  802.11r needs a password; the preview warns that some older devices
+  cannot join with it. RouterOS fills the 802.11k neighbour list of each
+  access point by itself (its own radios).
+- Clients: **Disconnect** (now, on the access point it is on, direct mode;
+  it usually comes back at once) and **Block**: the device goes into the
+  Wi-Fi state, and applying it on each access point adds a reject row of
+  the access list (comment `cairn-net: blocked`, first in the list) and
+  disconnects it if it is there. **Unblock** removes the row. Blocking the
+  device you use cuts you off: the change is then not kept, and the
+  access point undoes it by itself.
+- Guests: a **QR code** button per SSID of the state shows the code phones
+  read to join, with the password (`POST /api/wifi/share`, never cached,
+  like every answer). **New password** in it draws a random one guests can
+  type (`xxxx-xxxx-xxxx`), saves it in the state and applies the state on
+  each access point in direct mode, previewed and kept as usual.
+- `POST /api/wifi/state` takes `block`, `unblock` (`mac`, `name`) and
+  `rotate` (`ssid`); new `POST /api/wifi/kick` (`switch`, `mac`) and
+  `/api/wifi/share` (`ssid`). New dependency: `qrcode` (no default
+  features, no dependency of its own).
+
+## 0.8.1 (2026-11-20)
+
+- Adopting an access point whose write account refuses Cairn Net's key
+  now says so ("cairn-write does not accept Cairn Net's key: run the two
+  RouterOS lines first", or "the first-setup script did not run there"
+  for a new one) instead of the raw `Permission denied` of ssh.
+- The **Adopt** dialog puts the two RouterOS lines first, and gives them
+  as one `ssh <account>@<address> '…'` command to copy (the account is
+  remembered by the browser, `admin` by default).
+
+## 0.8.0 (2026-11-19)
+
+- Wi-Fi state (`data/wifi.json`, mode 600): the SSIDs common to every
+  access point (name, VLAN, security, password, client isolation, hidden,
+  bands) and each access point's radios (channel, width, power). Taken
+  once from an access point (**Take it from …**: its SSIDs, their
+  passwords in direct mode, its radios), then edited on the page (**Edit
+  the SSIDs**: add, rename, remove, VLAN, security, bands; an empty
+  password keeps the old one). Changing the state writes nothing to the
+  access points, and the page never receives a password.
+- Each access point's card says whether it is in line with the state, or
+  lists what applying it would change (passwords aside: the read account
+  cannot see them). **Apply the state** previews, applies with the write
+  account, reads back until nothing is left to change, and is undone by
+  the access point unless kept. **Set** now saves that access point's
+  radios in the state, then previews the state there. The per-SSID form
+  of 0.7.0 is gone: the state replaces it.
+- Applying the state creates the SSIDs an access point lacks (on the
+  radio's own interface when it is free, else one secondary interface per
+  SSID), turns them off on the bands they leave, removes those the state
+  no longer has, and adds their VLANs on its uplink. A VLAN new to an
+  access point must already pass through the switch port across (link of
+  the topology, that switch's bridge VLANs): otherwise refused, naming the
+  port to fix. Nothing is written to the switch.
+- Drift: every 10 minutes the access points are compared with the state
+  (passwords too in direct mode); a change is notified once.
+- New access points: **Add an access point** writes a first-setup script
+  without any secret (bridge and uplink, management VLAN and address,
+  radios off, accounts with random passwords nobody keeps, Cairn Net's
+  public SSH key on the write account `cairn-write`, services closed but
+  api-ssl and SSH, then the lines of `data/ap-extra.rsc` if there is one,
+  VLAN filtering last). **Adopt** logs in over SSH with that key, gives
+  the accounts passwords only Cairn Net knows, matches the api-ssl
+  certificate with the fingerprint shown over SSH, and saves the access
+  point in Settings, direct mode. An access point already in Settings is
+  adopted the same way once its write account has the key (two RouterOS
+  lines shown on its card).
+- `GET /api/wifi` carries `state` (`has_passphrase`, never the password),
+  `app` (Cairn Net's address as the switches see it) and, per access
+  point, `plan`, `plan_warn`, `plan_error`, `has_write`. New:
+  `POST /api/wifi/state` (`import`, `ssids`, `radios`),
+  `/api/wifi/bootstrap`, `/api/wifi/adopt`. `/api/wifi/preview` and
+  `/apply` take `switch` only.
+
 ## 0.7.0 (2026-11-19)
 
 - Wi-Fi page: an access point in direct mode is set from its card

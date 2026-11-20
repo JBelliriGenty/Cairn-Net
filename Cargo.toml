@@ -1,6 +1,6 @@
 [package]
 name = "cairn-net"
-version = "0.7.0"
+version = "0.10.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Web panel for a few MikroTik RouterOS switches (RouterOS API over TLS): ports, devices, VLANs, DHCP servers and reservations, written directly or through Git, lease names in DNS, and per-switch settings with automatic rollback"
@@ -11,6 +11,7 @@ license = "MIT"
 tiny_http = { version = "0.12", features = ["ssl-openssl"] }
 serde_json = "1"
 openssl = "0.10"
+qrcode = { version = "0.15.0", default-features = false }
 
 [profile.release]
 opt-level = "s"

@@ -17,7 +17,7 @@
 //!
 //! Firewall (src/firewall.rs): filter, NAT, mangle, raw, lists, read only.
 //!
-//! Wi-Fi (src/wifi.rs): the access points as one network; settings of one access point in direct mode.
+//! Wi-Fi (src/wifi.rs): the access points as one network; the Wi-Fi state common to all, applied to each in direct mode; new access points set up and adopted.
 //!
 //! Without such a proxy, "login" in the configuration turns on the built-in
 //! sign-in (src/login.rs, HTTPS required: "tls" with cert and key files).
@@ -1618,6 +1618,12 @@ fn handle(cfg: &'static Config, mut r: Request) {
             "/api/infra/power" => infra_power(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/wifi/preview" => wifi::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/wifi/apply" => wifi::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/state" => wifi::state_post(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/bootstrap" => wifi::bootstrap(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/adopt" => wifi::adopt(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/kick" => wifi::kick(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/restart" => wifi::restart(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
+            "/api/wifi/share" => wifi::share(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/chip/preview" => chip::preview(&v).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/chip/apply" => chip::apply(&v, &user).unwrap_or_else(|e| json!({"ok": false, "error": e})),
             "/api/settings/probe" => probe(&v),
@@ -1748,6 +1754,8 @@ fn main() {
     eprintln!("cairn-net listening on {}", cfg.listen);
     drift_watch(cfg.notify.as_ref());
     resolve_watch(cfg.notify.as_ref());
+    wifi::watch(cfg.notify.as_ref());
+    wifi::schedules(cfg.notify.as_ref());
     // DNS integrations: every 2 minutes, from the shared read of the switches
     std::thread::spawn(|| loop {
         std::thread::sleep(Duration::from_secs(20));

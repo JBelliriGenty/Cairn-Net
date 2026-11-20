@@ -81,10 +81,20 @@ Demo data.
   network: radios (band, channel, width, power, clients), SSIDs merged by
   name with the differences between access points, the channel map, every
   client with its name, IP, signal and rates, connections and roaming from
-  the access points' logs. In direct mode, an access point's settings:
-  channel (legal channels only), width and power per radio, SSIDs on or off
-  per radio, client isolation and password per SSID, with the rollback
-  below.
+  the access points' logs. A Wi-Fi state common to all of them (SSIDs:
+  name, VLAN, security, password, isolation, hidden, bands; radios per
+  access point: legal channel, width, power), taken from one access point
+  and edited on the page; each access point shows what applying it would
+  change, applied one at a time in direct mode with the rollback below,
+  a VLAN new to an access point checked on the switch port across, drift
+  notified. A new access point gets a first-setup script without any
+  secret, then is adopted with Cairn Net's SSH key: passwords only Cairn
+  Net knows, direct mode. Roaming per SSID (802.11r fast transition,
+  802.11k/v, dual-band devices steered to 5 GHz); a client disconnected,
+  or blocked on every access point (access list); an SSID shared with
+  guests as a QR code, or given a new random password. An SSID on air on
+  some days and hours only (guests at night off), run by Cairn Net itself
+  by each access point's clock.
 - **Terminal**: run RouterOS commands per switch; read-only commands
   (print, export, monitor) with the read account, the rest in direct mode,
   every command logged, dangerous ones confirmed by typing the switch name.
