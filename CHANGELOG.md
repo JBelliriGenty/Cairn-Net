@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.3 (2026-11-23)
+
+- **Devices on the cable between two switches**: a device plugged into an
+  unmanaged switch that sits on a link between two managed ones (a PoE
+  switch feeding an access point and another device) was seen on a link
+  port at both ends, so it vanished from Devices and Topology. It now shows
+  on the port of the first switch of that link.
+- A device's own LLDP or MNDP announcement now gives its type even when it
+  is heard through a link port.
+
 ## 0.10.2 (2026-11-20)
 
 - **Restart** button under the state of each radio on the access point

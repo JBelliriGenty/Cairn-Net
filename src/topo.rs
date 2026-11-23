@@ -249,6 +249,7 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
     let mut switch_macs: BTreeSet<String> =
         sws.iter().flat_map(|w| rows(w.v, "own_macs")).map(|f| up(s(f, "mac-address"))).filter(|m| !m.is_empty()).collect();
     let mut announced: BTreeMap<String, (usize, String, &Value)> = BTreeMap::new(); // other neighbours, by MAC
+    let mut heard: BTreeMap<String, &Value> = BTreeMap::new(); // their own announcement, even through a link
     for (i, w) in sws.iter().enumerate() {
         for n in rows(w.v, "neighbors") {
             let mac = up(s(n, "mac-address"));
@@ -262,6 +263,7 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
             if s(n, "identity").is_empty() {
                 continue; // a network card's own agent says nothing useful
             }
+            heard.entry(mac.clone()).or_insert(n);
             let port = list(s(n, "interface")).first().copied().unwrap_or("").to_string();
             if w.is_eth(&port) && !across[i].contains_key(&port) {
                 announced.entry(mac).or_insert((i, w.logical(&port), n));
@@ -287,6 +289,13 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
         let mut cand: Vec<&(usize, String, String)> = at.iter().filter(|(i, p, _)| !across[*i].contains_key(p)).collect();
         if cand.is_empty() {
             cand = at.iter().filter(|(i, p, _)| !knows(across[*i][p], mac)).collect();
+        }
+        if cand.is_empty() {
+            // on the cable itself (an unmanaged switch between two of ours): each sees it on its port towards the other
+            cand = at.iter().filter(|(i, p, _)| {
+                let j = across[*i][p];
+                at.iter().any(|(k, q, _)| *k == j && across[j].get(q) == Some(i))
+            }).collect();
         }
         cand.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| natural(&x.1, &y.1)));
         let Some((i, p, _)) = cand.first() else { continue };
@@ -325,7 +334,7 @@ pub fn build(switches: &[Value], arp: &[(String, String)], names: &BTreeMap<Stri
     }
 
     let mut devices: Vec<Value> = place.iter().map(|(mac, (i, port, vids))| {
-        let nb = announced.get(mac).map(|x| x.2);
+        let nb = heard.get(mac).copied();
         let ip = ip_of.get(mac).cloned().unwrap_or_default();
         let name = name_of.get(mac).cloned().or_else(|| names.get(&ip).cloned())
             .or_else(|| nb.map(|n| s(n, "identity").to_string()).filter(|x| !x.is_empty())).unwrap_or_default();
@@ -528,6 +537,21 @@ mod tests {
         ]);
         assert_eq!(t["devices"][2]["why"], json!({"by": "vms", "v": 2}));
         assert_eq!(t["devices"][1]["why"], json!({"by": "random"}));
+    }
+
+    #[test]
+    fn devices_on_the_cable_between_two_switches() {
+        // an unmanaged PoE switch on the A-B cable: an AP and its client sit on it, a PC is behind B
+        let ap = json!({"interface": "ether1,bridge", "identity": "AP2", "interface-name": "eth0", "mac-address": "02:00:00:00:00:F2", "system-caps-enabled": "bridge,wlan-ap,router"});
+        let host = |m: &str, p: &str| json!({"mac-address": m, "on-interface": p, "vid": "10"});
+        let a = json!({"name": "A", "monitor": mon(&["ether1"]), "neighbors": [nb("ether1,bridge", "B", "bridge/ether1", "02:00:00:00:00:B2"), ap.clone()],
+            "hosts": [host("02:00:00:00:00:F2", "ether1"), host("AA:00:00:00:00:02", "ether1"), host("AA:00:00:00:00:03", "ether1")]});
+        let b = json!({"name": "B", "monitor": mon(&["ether1", "ether2"]), "neighbors": [nb("ether1,bridge", "A", "bridge/ether1", "02:00:00:00:00:A2"), ap],
+            "hosts": [host("02:00:00:00:00:F2", "ether1"), host("AA:00:00:00:00:02", "ether1"), host("AA:00:00:00:00:03", "ether2")]});
+        let t = build(&[a, b], &[], &BTreeMap::new());
+        let got: Vec<String> = t["devices"].as_array().unwrap().iter()
+            .map(|d| format!("{} {} {} {} {}", d["mac"].as_str().unwrap(), d["sw"].as_str().unwrap(), d["port"].as_str().unwrap(), d["kind"].as_str().unwrap(), d["name"].as_str().unwrap())).collect();
+        assert_eq!(got, ["02:00:00:00:00:F2 A ether1 ap AP2", "AA:00:00:00:00:02 A ether1 unknown ", "AA:00:00:00:00:03 B ether2 unknown "]);
     }
 
     #[test]
